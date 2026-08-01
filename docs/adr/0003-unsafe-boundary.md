@@ -1,4 +1,4 @@
-# ADR 0003: All `unsafe` lives in `src/sys.rs`; the public API stays safe
+# ADR 0003: All `unsafe` lives in the private `sys` module
 
 - Status: accepted
 - Date: 2026-08-01
@@ -12,7 +12,7 @@ argument on its own.
 
 ## Decision
 
-The crate root carries `#![deny(unsafe_code)]`. The future `src/sys.rs`
+The crate root carries `#![deny(unsafe_code)]`. The private `src/sys.rs`
 module is the single place allowed to opt back in with
 `#![allow(unsafe_code)]`; it exposes a minimal, already-safe interface that
 the rest of the crate consumes.
@@ -20,5 +20,7 @@ the rest of the crate consumes.
 ## Consequences
 
 - Safety review concentrates on one file.
-- Everything above `sys` — including the entire public API — is auditable
-  as ordinary safe Rust.
+- Everything above `sys` — including the entire public API — is auditable as
+  ordinary safe Rust.
+- Raw handles, pointers, callbacks, UTF-16 buffers, and `windows-sys` types do
+  not cross the adapter boundary.
