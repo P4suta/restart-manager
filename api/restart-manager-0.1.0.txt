@@ -1,0 +1,305 @@
+pub mod restart_manager
+#[non_exhaustive] pub enum restart_manager::ApplicationType
+pub restart_manager::ApplicationType::Console
+pub restart_manager::ApplicationType::Critical
+pub restart_manager::ApplicationType::Explorer
+pub restart_manager::ApplicationType::MainWindow
+pub restart_manager::ApplicationType::OtherWindow
+pub restart_manager::ApplicationType::Service
+pub restart_manager::ApplicationType::Unknown
+pub restart_manager::ApplicationType::Unrecognized(i32)
+impl restart_manager::ApplicationType
+pub const fn restart_manager::ApplicationType::raw_value(self) -> i32
+#[non_exhaustive] pub enum restart_manager::ErrorKind
+pub restart_manager::ErrorKind::AccessDenied
+pub restart_manager::ErrorKind::CallbackInUse
+pub restart_manager::ErrorKind::Cancelled
+pub restart_manager::ErrorKind::DataChanged
+pub restart_manager::ErrorKind::InvalidInput
+pub restart_manager::ErrorKind::InvalidSessionKey
+pub restart_manager::ErrorKind::MalformedOsData
+pub restart_manager::ErrorKind::Os
+pub restart_manager::ErrorKind::SessionEnded
+pub restart_manager::ErrorKind::SessionLimit
+pub restart_manager::ErrorKind::TooManyResources
+pub enum restart_manager::FilterAction
+pub restart_manager::FilterAction::PreventRestart
+pub restart_manager::FilterAction::PreventShutdown
+#[non_exhaustive] pub enum restart_manager::FilterTarget
+pub restart_manager::FilterTarget::Executable(std::path::PathBuf)
+pub restart_manager::FilterTarget::Process(restart_manager::UniqueProcess)
+pub restart_manager::FilterTarget::Service(std::ffi::os_str::OsString)
+impl restart_manager::FilterTarget
+pub fn restart_manager::FilterTarget::as_executable(&self) -> core::option::Option<&std::path::Path>
+pub const fn restart_manager::FilterTarget::as_process(&self) -> core::option::Option<restart_manager::UniqueProcess>
+pub fn restart_manager::FilterTarget::as_service(&self) -> core::option::Option<&std::ffi::os_str::OsStr>
+pub fn restart_manager::FilterTarget::executable(impl core::convert::Into<std::path::PathBuf>) -> Self
+pub const fn restart_manager::FilterTarget::process(restart_manager::UniqueProcess) -> Self
+pub fn restart_manager::FilterTarget::service(impl core::convert::Into<std::ffi::os_str::OsString>) -> Self
+pub struct restart_manager::AffectedApplication
+impl restart_manager::AffectedApplication
+pub const fn restart_manager::AffectedApplication::application_type(&self) -> restart_manager::ApplicationType
+pub fn restart_manager::AffectedApplication::display_name(&self) -> &std::ffi::os_str::OsStr
+pub const fn restart_manager::AffectedApplication::is_restartable(&self) -> bool
+pub const fn restart_manager::AffectedApplication::process(&self) -> core::option::Option<restart_manager::UniqueProcess>
+pub fn restart_manager::AffectedApplication::service_name(&self) -> core::option::Option<&std::ffi::os_str::OsStr>
+pub const fn restart_manager::AffectedApplication::status(&self) -> restart_manager::ApplicationStatus
+pub const fn restart_manager::AffectedApplication::terminal_session_id(&self) -> core::option::Option<u32>
+pub struct restart_manager::AffectedApplications
+impl restart_manager::AffectedApplications
+pub fn restart_manager::AffectedApplications::applications(&self) -> &[restart_manager::AffectedApplication]
+pub fn restart_manager::AffectedApplications::is_empty(&self) -> bool
+pub fn restart_manager::AffectedApplications::iter(&self) -> core::slice::iter::Iter<'_, restart_manager::AffectedApplication>
+pub fn restart_manager::AffectedApplications::len(&self) -> usize
+pub const fn restart_manager::AffectedApplications::reboot_reasons(&self) -> restart_manager::RebootReasons
+impl core::iter::traits::collect::IntoIterator for restart_manager::AffectedApplications
+pub type restart_manager::AffectedApplications::IntoIter = alloc::vec::into_iter::IntoIter<restart_manager::AffectedApplication>
+pub type restart_manager::AffectedApplications::Item = restart_manager::AffectedApplication
+pub fn restart_manager::AffectedApplications::into_iter(self) -> Self::IntoIter
+impl<'a> core::iter::traits::collect::IntoIterator for &'a restart_manager::AffectedApplications
+pub type &'a restart_manager::AffectedApplications::IntoIter = core::slice::iter::Iter<'a, restart_manager::AffectedApplication>
+pub type &'a restart_manager::AffectedApplications::Item = &'a restart_manager::AffectedApplication
+pub fn &'a restart_manager::AffectedApplications::into_iter(self) -> Self::IntoIter
+pub struct restart_manager::ApplicationStatus(_)
+impl restart_manager::ApplicationStatus
+pub const restart_manager::ApplicationStatus::ERROR_ON_RESTART: Self
+pub const restart_manager::ApplicationStatus::ERROR_ON_STOP: Self
+pub const restart_manager::ApplicationStatus::RESTARTED: Self
+pub const restart_manager::ApplicationStatus::RESTART_MASKED: Self
+pub const restart_manager::ApplicationStatus::RUNNING: Self
+pub const restart_manager::ApplicationStatus::SHUTDOWN_MASKED: Self
+pub const restart_manager::ApplicationStatus::STOPPED: Self
+pub const restart_manager::ApplicationStatus::STOPPED_OTHER: Self
+impl restart_manager::ApplicationStatus
+pub const fn restart_manager::ApplicationStatus::all() -> Self
+pub const fn restart_manager::ApplicationStatus::bits(&self) -> u32
+pub const fn restart_manager::ApplicationStatus::complement(self) -> Self
+pub const fn restart_manager::ApplicationStatus::contains(&self, Self) -> bool
+pub const fn restart_manager::ApplicationStatus::difference(self, Self) -> Self
+pub const fn restart_manager::ApplicationStatus::empty() -> Self
+pub const fn restart_manager::ApplicationStatus::from_bits(u32) -> core::option::Option<Self>
+pub const fn restart_manager::ApplicationStatus::from_bits_retain(u32) -> Self
+pub const fn restart_manager::ApplicationStatus::from_bits_truncate(u32) -> Self
+pub fn restart_manager::ApplicationStatus::from_name(&str) -> core::option::Option<Self>
+pub fn restart_manager::ApplicationStatus::insert(&mut self, Self)
+pub const fn restart_manager::ApplicationStatus::intersection(self, Self) -> Self
+pub const fn restart_manager::ApplicationStatus::intersects(&self, Self) -> bool
+pub const fn restart_manager::ApplicationStatus::is_all(&self) -> bool
+pub const fn restart_manager::ApplicationStatus::is_empty(&self) -> bool
+pub fn restart_manager::ApplicationStatus::remove(&mut self, Self)
+pub fn restart_manager::ApplicationStatus::set(&mut self, Self, bool)
+pub const fn restart_manager::ApplicationStatus::symmetric_difference(self, Self) -> Self
+pub fn restart_manager::ApplicationStatus::toggle(&mut self, Self)
+pub const fn restart_manager::ApplicationStatus::union(self, Self) -> Self
+impl restart_manager::ApplicationStatus
+pub const fn restart_manager::ApplicationStatus::iter(&self) -> bitflags::iter::Iter<restart_manager::ApplicationStatus>
+pub const fn restart_manager::ApplicationStatus::iter_names(&self) -> bitflags::iter::IterNames<restart_manager::ApplicationStatus>
+impl bitflags::traits::Flags for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::Bits = u32
+pub const restart_manager::ApplicationStatus::FLAGS: &'static [bitflags::traits::Flag<restart_manager::ApplicationStatus>]
+pub fn restart_manager::ApplicationStatus::all_named() -> restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::bits(&self) -> u32
+pub fn restart_manager::ApplicationStatus::from_bits_retain(u32) -> restart_manager::ApplicationStatus
+impl bitflags::traits::PublicFlags for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::Internal = InternalBitFlags
+pub type restart_manager::ApplicationStatus::Primitive = u32
+impl core::fmt::Binary for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::LowerHex for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Octal for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::UpperHex for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::iter::traits::collect::Extend<restart_manager::ApplicationStatus> for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::extend<T: core::iter::traits::collect::IntoIterator<Item = Self>>(&mut self, T)
+impl core::iter::traits::collect::FromIterator<restart_manager::ApplicationStatus> for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::from_iter<T: core::iter::traits::collect::IntoIterator<Item = Self>>(T) -> Self
+impl core::iter::traits::collect::IntoIterator for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::IntoIter = bitflags::iter::Iter<restart_manager::ApplicationStatus>
+pub type restart_manager::ApplicationStatus::Item = restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::into_iter(self) -> Self::IntoIter
+impl core::ops::arith::Sub for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::Output = restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::sub(self, Self) -> Self
+impl core::ops::arith::SubAssign for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::sub_assign(&mut self, Self)
+impl core::ops::bit::BitAnd for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::Output = restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::bitand(self, Self) -> Self
+impl core::ops::bit::BitAndAssign for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::bitand_assign(&mut self, Self)
+impl core::ops::bit::BitOr for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::Output = restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::bitor(self, restart_manager::ApplicationStatus) -> Self
+impl core::ops::bit::BitOrAssign for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::bitor_assign(&mut self, Self)
+impl core::ops::bit::BitXor for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::Output = restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::bitxor(self, Self) -> Self
+impl core::ops::bit::BitXorAssign for restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::bitxor_assign(&mut self, Self)
+impl core::ops::bit::Not for restart_manager::ApplicationStatus
+pub type restart_manager::ApplicationStatus::Output = restart_manager::ApplicationStatus
+pub fn restart_manager::ApplicationStatus::not(self) -> Self
+pub struct restart_manager::CancellationHandle
+impl restart_manager::CancellationHandle
+pub fn restart_manager::CancellationHandle::cancel(&self) -> restart_manager::Result<()>
+impl core::fmt::Debug for restart_manager::CancellationHandle
+pub fn restart_manager::CancellationHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct restart_manager::Error
+impl restart_manager::Error
+pub const fn restart_manager::Error::kind(&self) -> restart_manager::ErrorKind
+pub const fn restart_manager::Error::raw_os_error(&self) -> core::option::Option<u32>
+pub struct restart_manager::Filter
+impl restart_manager::Filter
+pub const fn restart_manager::Filter::action(&self) -> restart_manager::FilterAction
+pub const fn restart_manager::Filter::target(&self) -> &restart_manager::FilterTarget
+pub struct restart_manager::JoinedSession
+impl restart_manager::JoinedSession
+pub fn restart_manager::JoinedSession::affected_applications(&mut self) -> restart_manager::Result<restart_manager::AffectedApplications>
+pub fn restart_manager::JoinedSession::end(self) -> restart_manager::Result<()>
+pub fn restart_manager::JoinedSession::join(&restart_manager::SessionKey) -> restart_manager::Result<Self>
+pub fn restart_manager::JoinedSession::register_files<I, P>(&mut self, I) -> restart_manager::Result<()> where I: core::iter::traits::collect::IntoIterator<Item = P>, P: core::convert::AsRef<std::path::Path>
+pub fn restart_manager::JoinedSession::register_processes(&mut self, &[restart_manager::UniqueProcess]) -> restart_manager::Result<()>
+pub fn restart_manager::JoinedSession::register_resources(&mut self, &restart_manager::ResourceSet) -> restart_manager::Result<()>
+pub fn restart_manager::JoinedSession::register_services<I, S>(&mut self, I) -> restart_manager::Result<()> where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::AsRef<std::ffi::os_str::OsStr>
+pub fn restart_manager::JoinedSession::session_key(&self) -> &restart_manager::SessionKey
+pub struct restart_manager::Progress
+impl restart_manager::Progress
+pub const fn restart_manager::Progress::percent_complete(self) -> u32
+pub struct restart_manager::RebootReasons(_)
+impl restart_manager::RebootReasons
+pub const restart_manager::RebootReasons::CRITICAL_PROCESS: Self
+pub const restart_manager::RebootReasons::CRITICAL_SERVICE: Self
+pub const restart_manager::RebootReasons::DETECTED_SELF: Self
+pub const restart_manager::RebootReasons::PERMISSION_DENIED: Self
+pub const restart_manager::RebootReasons::SESSION_MISMATCH: Self
+impl restart_manager::RebootReasons
+pub const fn restart_manager::RebootReasons::all() -> Self
+pub const fn restart_manager::RebootReasons::bits(&self) -> u32
+pub const fn restart_manager::RebootReasons::complement(self) -> Self
+pub const fn restart_manager::RebootReasons::contains(&self, Self) -> bool
+pub const fn restart_manager::RebootReasons::difference(self, Self) -> Self
+pub const fn restart_manager::RebootReasons::empty() -> Self
+pub const fn restart_manager::RebootReasons::from_bits(u32) -> core::option::Option<Self>
+pub const fn restart_manager::RebootReasons::from_bits_retain(u32) -> Self
+pub const fn restart_manager::RebootReasons::from_bits_truncate(u32) -> Self
+pub fn restart_manager::RebootReasons::from_name(&str) -> core::option::Option<Self>
+pub fn restart_manager::RebootReasons::insert(&mut self, Self)
+pub const fn restart_manager::RebootReasons::intersection(self, Self) -> Self
+pub const fn restart_manager::RebootReasons::intersects(&self, Self) -> bool
+pub const fn restart_manager::RebootReasons::is_all(&self) -> bool
+pub const fn restart_manager::RebootReasons::is_empty(&self) -> bool
+pub fn restart_manager::RebootReasons::remove(&mut self, Self)
+pub fn restart_manager::RebootReasons::set(&mut self, Self, bool)
+pub const fn restart_manager::RebootReasons::symmetric_difference(self, Self) -> Self
+pub fn restart_manager::RebootReasons::toggle(&mut self, Self)
+pub const fn restart_manager::RebootReasons::union(self, Self) -> Self
+impl restart_manager::RebootReasons
+pub const fn restart_manager::RebootReasons::iter(&self) -> bitflags::iter::Iter<restart_manager::RebootReasons>
+pub const fn restart_manager::RebootReasons::iter_names(&self) -> bitflags::iter::IterNames<restart_manager::RebootReasons>
+impl bitflags::traits::Flags for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::Bits = u32
+pub const restart_manager::RebootReasons::FLAGS: &'static [bitflags::traits::Flag<restart_manager::RebootReasons>]
+pub fn restart_manager::RebootReasons::all_named() -> restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::bits(&self) -> u32
+pub fn restart_manager::RebootReasons::from_bits_retain(u32) -> restart_manager::RebootReasons
+impl bitflags::traits::PublicFlags for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::Internal = InternalBitFlags
+pub type restart_manager::RebootReasons::Primitive = u32
+impl core::fmt::Binary for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::LowerHex for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Octal for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::UpperHex for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::iter::traits::collect::Extend<restart_manager::RebootReasons> for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::extend<T: core::iter::traits::collect::IntoIterator<Item = Self>>(&mut self, T)
+impl core::iter::traits::collect::FromIterator<restart_manager::RebootReasons> for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::from_iter<T: core::iter::traits::collect::IntoIterator<Item = Self>>(T) -> Self
+impl core::iter::traits::collect::IntoIterator for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::IntoIter = bitflags::iter::Iter<restart_manager::RebootReasons>
+pub type restart_manager::RebootReasons::Item = restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::into_iter(self) -> Self::IntoIter
+impl core::ops::arith::Sub for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::Output = restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::sub(self, Self) -> Self
+impl core::ops::arith::SubAssign for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::sub_assign(&mut self, Self)
+impl core::ops::bit::BitAnd for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::Output = restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::bitand(self, Self) -> Self
+impl core::ops::bit::BitAndAssign for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::bitand_assign(&mut self, Self)
+impl core::ops::bit::BitOr for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::Output = restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::bitor(self, restart_manager::RebootReasons) -> Self
+impl core::ops::bit::BitOrAssign for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::bitor_assign(&mut self, Self)
+impl core::ops::bit::BitXor for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::Output = restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::bitxor(self, Self) -> Self
+impl core::ops::bit::BitXorAssign for restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::bitxor_assign(&mut self, Self)
+impl core::ops::bit::Not for restart_manager::RebootReasons
+pub type restart_manager::RebootReasons::Output = restart_manager::RebootReasons
+pub fn restart_manager::RebootReasons::not(self) -> Self
+pub struct restart_manager::ResourceSet
+impl restart_manager::ResourceSet
+pub fn restart_manager::ResourceSet::add_file(&mut self, impl core::convert::Into<std::path::PathBuf>) -> &mut Self
+pub fn restart_manager::ResourceSet::add_process(&mut self, restart_manager::UniqueProcess) -> &mut Self
+pub fn restart_manager::ResourceSet::add_service(&mut self, impl core::convert::Into<std::ffi::os_str::OsString>) -> &mut Self
+pub fn restart_manager::ResourceSet::file(self, impl core::convert::Into<std::path::PathBuf>) -> Self
+pub fn restart_manager::ResourceSet::is_empty(&self) -> bool
+pub fn restart_manager::ResourceSet::len(&self) -> usize
+pub const fn restart_manager::ResourceSet::new() -> Self
+pub fn restart_manager::ResourceSet::process(self, restart_manager::UniqueProcess) -> Self
+pub fn restart_manager::ResourceSet::service(self, impl core::convert::Into<std::ffi::os_str::OsString>) -> Self
+pub struct restart_manager::RestartSession
+impl restart_manager::RestartSession
+pub fn restart_manager::RestartSession::affected_applications(&mut self) -> restart_manager::Result<restart_manager::AffectedApplications>
+pub fn restart_manager::RestartSession::cancellation_handle(&self) -> restart_manager::CancellationHandle
+pub fn restart_manager::RestartSession::end(self) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::filters(&mut self) -> restart_manager::Result<alloc::vec::Vec<restart_manager::Filter>>
+pub fn restart_manager::RestartSession::new() -> restart_manager::Result<Self>
+pub fn restart_manager::RestartSession::register_files<I, P>(&mut self, I) -> restart_manager::Result<()> where I: core::iter::traits::collect::IntoIterator<Item = P>, P: core::convert::AsRef<std::path::Path>
+pub fn restart_manager::RestartSession::register_processes(&mut self, &[restart_manager::UniqueProcess]) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::register_resources(&mut self, &restart_manager::ResourceSet) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::register_services<I, S>(&mut self, I) -> restart_manager::Result<()> where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::AsRef<std::ffi::os_str::OsStr>
+pub fn restart_manager::RestartSession::remove_filter(&mut self, &restart_manager::FilterTarget) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::restart(&mut self) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::restart_with_progress<F>(&mut self, F) -> restart_manager::Result<()> where F: core::ops::function::FnMut(restart_manager::Progress) + core::marker::Send
+pub fn restart_manager::RestartSession::session_key(&self) -> &restart_manager::SessionKey
+pub fn restart_manager::RestartSession::set_filter(&mut self, restart_manager::FilterTarget, restart_manager::FilterAction) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::shutdown(&mut self) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::shutdown_with_options(&mut self, restart_manager::ShutdownOptions) -> restart_manager::Result<()>
+pub fn restart_manager::RestartSession::shutdown_with_progress<F>(&mut self, restart_manager::ShutdownOptions, F) -> restart_manager::Result<()> where F: core::ops::function::FnMut(restart_manager::Progress) + core::marker::Send
+pub struct restart_manager::SessionKey(_)
+impl restart_manager::SessionKey
+pub fn restart_manager::SessionKey::as_str(&self) -> &str
+impl core::fmt::Debug for restart_manager::SessionKey
+pub fn restart_manager::SessionKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for restart_manager::SessionKey
+pub fn restart_manager::SessionKey::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::str::traits::FromStr for restart_manager::SessionKey
+pub type restart_manager::SessionKey::Err = restart_manager::Error
+pub fn restart_manager::SessionKey::from_str(&str) -> restart_manager::Result<Self>
+pub struct restart_manager::ShutdownOptions
+impl restart_manager::ShutdownOptions
+pub const fn restart_manager::ShutdownOptions::force_if_hung(self) -> bool
+pub const fn restart_manager::ShutdownOptions::new() -> Self
+pub const fn restart_manager::ShutdownOptions::only_registered(self) -> bool
+pub const fn restart_manager::ShutdownOptions::with_force_if_hung(self, bool) -> Self
+pub const fn restart_manager::ShutdownOptions::with_only_registered(self, bool) -> Self
+pub struct restart_manager::UniqueProcess
+impl restart_manager::UniqueProcess
+pub fn restart_manager::UniqueProcess::current() -> restart_manager::Result<Self>
+pub fn restart_manager::UniqueProcess::from_pid(u32) -> restart_manager::Result<Self>
+impl restart_manager::UniqueProcess
+pub const fn restart_manager::UniqueProcess::from_parts(u32, u64) -> Self
+pub const fn restart_manager::UniqueProcess::pid(self) -> u32
+pub const fn restart_manager::UniqueProcess::start_time(self) -> u64
+pub type restart_manager::Result<T, E> = core::result::Result<T, E>

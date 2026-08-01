@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-quality:
+    name: Windows 2022 quality and native tests
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-targets -- --test-threads=1
+      - run: cargo xtask e2e
+      - name: Warning-free rustdoc and doctests
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --workspace --no-deps
+          cargo test --doc
+      - run: cargo publish --dry-run
+
+  windows-latest:
+    name: Windows latest native and E2E
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace --all-targets -- --test-threads=1
+      - run: cargo xtask e2e
+
+  msrv:
+    name: Rust 1.88 MSRV
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo +1.88.0 check --workspace --all-targets
+      - run: cargo +1.88.0 test --workspace --lib
+
+  target-checks:
+    name: Compile ${{ matrix.target }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - i686-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo check --package restart-manager --target ${{ matrix.target }}
+
+  non-windows:
+    name: Non-Windows compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo check --workspace --all-targets
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  coverage:
+    name: Coverage (line, region, function >= 90%)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov clean --workspace
+      - run: cargo llvm-cov --workspace --all-targets --no-report -- --test-threads=1
+      - run: cargo llvm-cov run --package xtask --no-report -- e2e
+      - name: Enforce all three thresholds
+        run: >-
+          cargo llvm-cov report
+          --fail-under-lines 90
+          --fail-under-regions 90
+          --fail-under-functions 90
+          --codecov
+          --output-path codecov.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-codecov
+          path: codecov.json
+
+  public-api:
+    name: Public API snapshot
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api
+      - name: Compare the v0.1 API snapshot
+        shell: bash
+        run: |
+          cargo public-api -sss > public-api.actual.txt
+          git diff --no-index --exit-code api/restart-manager-0.1.0.txt public-api.actual.txt
+
+  package-consumer:
+    name: Packaged-crate consumer smoke
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo package --allow-dirty
+      - name: Consume the packaged source from a clean crate
+        shell: pwsh
+        run: |
+          $archive = Resolve-Path target/package/restart-manager-0.1.0.crate
+          $unpack = Join-Path $env:RUNNER_TEMP restart-manager-package
+          New-Item -ItemType Directory -Path $unpack | Out-Null
+          tar -xf $archive -C $unpack
+          $source = (Resolve-Path "$unpack/restart-manager-0.1.0").Path.Replace('\', '/')
+          $consumer = Join-Path $env:RUNNER_TEMP restart-manager-consumer
+          cargo new --bin $consumer
+          @"
+          [package]
+          name = "restart-manager-consumer"
+          version = "0.0.0"
+          edition = "2024"
+
+          [dependencies]
+          restart-manager = { path = "$source" }
+          "@ | Set-Content -Encoding utf8 "$consumer/Cargo.toml"
+          @"
+          #[cfg(windows)]
+          fn main() {
+              let _ = restart_manager::ShutdownOptions::default();
+          }
+
+          #[cfg(not(windows))]
+          fn main() {}
+          "@ | Set-Content -Encoding utf8 "$consumer/src/main.rs"
+          cargo check --manifest-path "$consumer/Cargo.toml"

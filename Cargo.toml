@@ -16,7 +16,6 @@ exclude = [
     "/.github",
     "/api",
     "/deny.toml",
-    "/tests",
     "/xtask",
 ]
 

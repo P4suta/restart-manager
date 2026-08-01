@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Windows Restart Manager documentation
+    url: https://learn.microsoft.com/windows/win32/rstmgr/restart-manager-portal
+    about: Check the native platform semantics before proposing API behavior.

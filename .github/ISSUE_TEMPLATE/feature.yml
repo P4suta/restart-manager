@@ -1,0 +1,26 @@
+name: API proposal
+description: Propose a focused addition or semantic change
+title: "proposal: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Concrete use case
+      description: Explain the current Windows Restart Manager operation that cannot be represented.
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API
+      description: Show signatures and identify whether the capability belongs to the primary or joined role.
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Safety and lifecycle invariants
+      description: Cover ownership, concurrency, native buffers, and compatibility with non-Windows compilation.
+    validations:
+      required: true

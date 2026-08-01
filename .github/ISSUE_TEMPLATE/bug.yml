@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible restart-manager defect
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach private session keys, paths, process names, or logs without redacting them.
+  - type: input
+    id: version
+    attributes:
+      label: restart-manager version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and architecture
+      placeholder: Windows 11 24H2, x86_64
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include code and the exact sequence of calls.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include ErrorKind and raw_os_error when available.
+    validations:
+      required: true
