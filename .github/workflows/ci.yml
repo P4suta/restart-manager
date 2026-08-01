@@ -12,47 +12,50 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   windows-quality:
-    name: Windows 2022 quality and native tests
+    name: Windows 2022 quality, native, and E2E
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy,rustfmt
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-targets -- --test-threads=1
-      - run: cargo xtask e2e
-      - name: Warning-free rustdoc and doctests
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-targets --all-features --locked -- --test-threads=1
+      - run: cargo test --doc --all-features --locked
+      - run: cargo run --locked --package xtask -- e2e
+      - name: Warning-free rustdoc
         env:
           RUSTDOCFLAGS: -D warnings
-        run: |
-          cargo doc --workspace --no-deps
-          cargo test --doc
-      - run: cargo publish --dry-run
+        run: cargo doc --workspace --all-features --locked --no-deps
+      - run: cargo package --locked
 
   windows-latest:
     name: Windows latest native and E2E
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace --all-targets -- --test-threads=1
-      - run: cargo xtask e2e
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - run: cargo test --package restart-manager --all-targets --all-features --locked -- --test-threads=1
+      - run: cargo run --locked --package xtask -- e2e
 
   msrv:
     name: Rust 1.88 MSRV
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@1.88.0
-      - run: cargo +1.88.0 check --workspace --all-targets
-      - run: cargo +1.88.0 test --workspace --lib
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-targets --all-features --locked
+      - run: cargo test --package restart-manager --lib --locked
 
   target-checks:
-    name: Compile ${{ matrix.target }}
+    name: Compile ${{ matrix.target }} (${{ matrix.features }})
     runs-on: windows-2022
     strategy:
       fail-fast: false
@@ -61,79 +64,136 @@ jobs:
           - x86_64-pc-windows-msvc
           - i686-pc-windows-msvc
           - aarch64-pc-windows-msvc
+        features: [default, all]
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: ${{ matrix.target }}
-      - run: cargo check --package restart-manager --target ${{ matrix.target }}
+      - if: matrix.features == 'default'
+        run: cargo check --package restart-manager --target ${{ matrix.target }} --locked
+      - if: matrix.features == 'all'
+        run: cargo check --package restart-manager --target ${{ matrix.target }} --all-features --locked
 
-  non-windows:
-    name: Non-Windows compile
-    runs-on: ubuntu-latest
+  portable:
+    name: Portable API on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy
-      - run: cargo check --workspace --all-targets
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-targets --all-features --locked
+      - run: cargo test --package restart-manager --all-targets --all-features --locked
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  miri:
+    name: Portable pure tests under Miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@nightly-2026-07-15
+        with:
+          components: miri
+      - run: cargo miri setup
+      - run: cargo miri test --package restart-manager --lib --no-default-features --locked
 
   coverage:
-    name: Coverage (line, region, function >= 90%)
+    name: Library and unsafe boundary coverage >= 90%
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo install cargo-llvm-cov --version 0.8.7 --locked
       - run: cargo llvm-cov clean --workspace
-      - run: cargo llvm-cov --workspace --all-targets --no-report -- --test-threads=1
-      - run: cargo llvm-cov run --package xtask --no-report -- e2e
-      - name: Enforce all three thresholds
+      - name: Test only the publishable library (no xtask dilution)
         run: >-
-          cargo llvm-cov report
+          cargo llvm-cov
+          --package restart-manager
+          --all-targets
+          --all-features
+          --locked
           --fail-under-lines 90
           --fail-under-regions 90
           --fail-under-functions 90
           --codecov
           --output-path codecov.json
-      - uses: actions/upload-artifact@v7
-        with:
-          name: coverage-codecov
-          path: codecov.json
-
-  public-api:
-    name: Public API snapshot
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-public-api
-      - name: Compare the v0.1 API snapshot
-        shell: bash
-        run: |
-          cargo public-api -sss > public-api.actual.txt
-          git diff --no-index --exit-code api/restart-manager-0.1.0.txt public-api.actual.txt
-
-  package-consumer:
-    name: Packaged-crate consumer smoke
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo package --allow-dirty
-      - name: Consume the packaged source from a clean crate
+          --
+          --test-threads=1
+      - run: cargo llvm-cov report --json --output-path coverage-summary.json
+      - name: Enforce unsafe sys line, region, and function coverage
         shell: pwsh
         run: |
-          $archive = Resolve-Path target/package/restart-manager-0.1.0.crate
+          $report = Get-Content -Raw coverage-summary.json | ConvertFrom-Json -Depth 100
+          $sys = $report.data[0].files |
+            Where-Object { $_.filename -like '*\src\sys.rs' } |
+            Select-Object -First 1
+          if ($null -eq $sys) { throw 'sys.rs is missing from coverage output' }
+          foreach ($metric in @('lines', 'regions', 'functions')) {
+            $percent = $sys.summary.$metric.percent
+            if ($percent -lt 90) {
+              throw "unsafe sys $metric coverage is $percent%, below 90%"
+            }
+          }
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: coverage-codecov
+          path: |
+            codecov.json
+            coverage-summary.json
+
+  public-api:
+    name: Default and all-feature API snapshots
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@nightly-2026-07-15
+      - run: cargo install cargo-public-api --version 0.52.0 --locked
+      - shell: bash
+        run: |
+          cargo public-api -sss --no-default-features > public-api.default.txt
+          cargo public-api -sss --all-features > public-api.all.txt
+          git diff --no-index --exit-code api/restart-manager-1.0.0-default.txt public-api.default.txt
+          git diff --no-index --exit-code api/restart-manager-1.0.0-all.txt public-api.all.txt
+
+  semver:
+    name: Reject breaking 1.x API changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - run: cargo install cargo-semver-checks --version 0.49.0 --locked
+      - run: >-
+          cargo semver-checks
+          --package restart-manager
+          --all-features
+          --baseline-rev ${{ github.event.pull_request.base.sha }}
+
+  package-consumer:
+    name: Packaged default/all-feature consumer smoke
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - run: cargo package --locked
+      - name: Consume only the packaged source
+        shell: pwsh
+        run: |
+          $archive = Resolve-Path target/package/restart-manager-1.0.0.crate
           $unpack = Join-Path $env:RUNNER_TEMP restart-manager-package
           New-Item -ItemType Directory -Path $unpack | Out-Null
           tar -xf $archive -C $unpack
-          $source = (Resolve-Path "$unpack/restart-manager-0.1.0").Path.Replace('\', '/')
+          $source = (Resolve-Path "$unpack/restart-manager-1.0.0").Path.Replace('\', '/')
           $consumer = Join-Path $env:RUNNER_TEMP restart-manager-consumer
           cargo new --bin $consumer
           @"
@@ -143,15 +203,13 @@ jobs:
           edition = "2024"
 
           [dependencies]
-          restart-manager = { path = "$source" }
+          restart-manager = { path = "$source", features = ["tokio"] }
           "@ | Set-Content -Encoding utf8 "$consumer/Cargo.toml"
           @"
-          #[cfg(windows)]
           fn main() {
               let _ = restart_manager::ShutdownOptions::default();
+              let _ = restart_manager::tokio::RestartSession::new();
           }
-
-          #[cfg(not(windows))]
-          fn main() {}
           "@ | Set-Content -Encoding utf8 "$consumer/src/main.rs"
-          cargo check --manifest-path "$consumer/Cargo.toml"
+          cargo generate-lockfile --manifest-path "$consumer/Cargo.toml"
+          cargo check --manifest-path "$consumer/Cargo.toml" --locked
