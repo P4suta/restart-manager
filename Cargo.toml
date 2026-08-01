@@ -1,0 +1,20 @@
+[package]
+name = "restart-manager"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+description = "Safe, human-friendly wrapper for the Windows Restart Manager API: find, stop, and restart the processes that lock your files"
+keywords = ["windows", "restart-manager", "rstrtmgr", "file-lock", "ffi"]
+categories = ["os::windows-apis", "api-bindings"]
+readme = "README.md"
+
+[workspace]
+members = ["xtask"]
+
+[target.'cfg(windows)'.dependencies]
+thiserror = "2"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_RestartManager",
+] }
