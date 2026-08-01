@@ -5,16 +5,30 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 description = "Safe, human-friendly wrapper for the Windows Restart Manager API: find, stop, and restart the processes that lock your files"
+repository = "https://github.com/P4suta/restart-manager"
+documentation = "https://docs.rs/restart-manager"
 keywords = ["windows", "restart-manager", "rstrtmgr", "file-lock", "ffi"]
 categories = ["os::windows-apis", "api-bindings"]
 readme = "README.md"
+exclude = [
+    "/.cargo",
+    "/.gitattributes",
+    "/.github",
+    "/api",
+    "/deny.toml",
+    "/tests",
+    "/xtask",
+]
 
 [workspace]
 members = ["xtask"]
+resolver = "3"
 
 [target.'cfg(windows)'.dependencies]
+bitflags = "2"
 thiserror = "2"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_RestartManager",
+    "Win32_System_Threading",
 ] }

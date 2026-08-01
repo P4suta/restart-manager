@@ -1,50 +1,46 @@
-//! Safe, human-friendly bindings to the **Windows Restart Manager**
-//! (`rstrtmgr.dll`).
+//! Safe blocking bindings to the Windows Restart Manager (`rstrtmgr.dll`).
 //!
-//! # Mission
+//! A primary [`RestartSession`] owns shutdown, restart, filter, and
+//! cancellation capabilities. A secondary [`JoinedSession`] can only register
+//! and inspect resources, making a role violation impossible to express.
 //!
-//! Windows refuses to touch files that other processes hold open — the
-//! infamous *"The action can't be completed because the file is open in
-//! another program"*. Since Windows Vista the operating system has shipped a
-//! first-party answer, the Restart Manager, yet using it from Rust today
-//! means hand-writing `unsafe` calls against raw bindings. This crate wraps
-//! the whole session lifecycle in one safe RAII type so you can:
-//!
-//! * find out **which processes lock** a set of files, services, or processes,
-//! * **shut them down** gracefully (force only by explicit choice),
-//! * **restart** the ones that support being restarted, once you are done.
-//!
-//! # Quick start
+//! # Example
 //!
 //! ```rust,no_run
-//! use restart_manager::{RestartSession, ShutdownPolicy};
+//! # #[cfg(windows)]
+//! # fn main() -> Result<(), restart_manager::Error> {
+//! use restart_manager::{RestartSession, ShutdownOptions};
 //!
-//! fn main() -> Result<(), restart_manager::Error> {
-//!     let mut session = RestartSession::new()?;
-//!     session.register_paths([r"C:\some\locked\file.dll"])?;
-//!
-//!     for app in session.affected_applications()? {
-//!         println!("locked by: {} ({:?})", app.display_name, app.app_type);
-//!     }
-//!
-//!     session.shutdown(ShutdownPolicy::Graceful)?;
-//!     // ... replace / move / delete the files here ...
-//!     session.restart()?;
-//!     Ok(())
-//! } // `Drop` ends the session (`RmEndSession`) even on early return.
+//! let mut session = RestartSession::new()?;
+//! session.register_files([r"C:\some\locked\file.dll"])?;
+//! let report = session.affected_applications()?;
+//! for application in &report {
+//!     println!("locked by: {:?}", application.display_name());
+//! }
+//! session.shutdown_with_options(ShutdownOptions::default())?;
+//! // Replace or update the registered files here.
+//! session.restart()?;
+//! # Ok(())
+//! # }
+//! # #[cfg(not(windows))]
+//! # fn main() {}
 //! ```
+//!
+//! Relative file and executable paths are made absolute, but this crate never
+//! checks existence or canonicalizes them. Restart Manager does not support
+//! registering directories. Forced shutdown is opt-in and can lose target
+//! application data. Restart is only possible for services and applications
+//! that registered for restart.
+//!
+//! Progress callbacks use a process-global native callback slot because the
+//! Windows API supplies no context pointer. Concurrent callback-bearing calls
+//! fail immediately with [`ErrorKind::CallbackInUse`]. A callback panic is
+//! contained at the FFI boundary and resumed after Windows returns.
 //!
 //! # Platform support
 //!
-//! This crate is **Windows-only**. On other targets it still compiles but
-//! exposes no items (the entire API sits behind `#[cfg(windows)]`), so
-//! platform-generic tooling — a Linux CI running `cargo check`, workspace-wide
-//! doc builds, and the like — keeps working without `compile_error!` tripwires.
+//! On non-Windows targets the crate compiles but exposes no public items.
 #![deny(unsafe_code)]
-// Unsafe policy (see docs/adr/0003-unsafe-boundary.md): the FFI layer will
-// live in a dedicated `src/sys.rs` module, which alone will opt back in via
-// `#![allow(unsafe_code)]`. Everything else — including the whole public
-// API — stays 100% safe Rust.
 
 #[cfg(windows)]
 mod application;
@@ -53,15 +49,23 @@ mod error;
 #[cfg(windows)]
 mod filter;
 #[cfg(windows)]
+mod resource;
+#[cfg(windows)]
 mod session;
 #[cfg(windows)]
 mod shutdown;
+#[cfg(windows)]
+mod sys;
 
 #[cfg(windows)]
 pub use crate::{
-    application::{AffectedApplication, ApplicationStatus, ApplicationType, UniqueProcess},
-    error::{Error, Result},
-    filter::{FilterAction, FilterResource},
-    session::{RestartSession, SessionKey},
-    shutdown::{Progress, ShutdownPolicy},
+    application::{
+        AffectedApplication, AffectedApplications, ApplicationStatus, ApplicationType,
+        RebootReasons, UniqueProcess,
+    },
+    error::{Error, ErrorKind, Result},
+    filter::{Filter, FilterAction, FilterTarget},
+    resource::ResourceSet,
+    session::{CancellationHandle, JoinedSession, RestartSession, SessionKey},
+    shutdown::{Progress, ShutdownOptions},
 };

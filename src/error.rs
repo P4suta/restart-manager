@@ -1,65 +1,70 @@
-//! Error type: thin, `thiserror`-derived, always carrying the Win32 code.
+//! Stable error classification without exposing implementation details.
 
-/// Specialised `Result` alias used throughout this crate.
+/// Specialised result alias used by this crate.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// Errors reported by the Restart Manager.
-///
-/// Every variant keeps the raw Win32 error code, so callers that need the
-/// exact OS-level cause never lose information to the classification.
-#[derive(Debug, thiserror::Error)]
+/// A stable, non-exhaustive classification of failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum Error {
-    /// `ERROR_MAX_SESSS_REACHED`: Windows allows at most **64 concurrent
-    /// Restart Manager sessions per user session**, and they are all in use.
-    ///
-    /// Sessions leaked by other (non-RAII) code count against the same
-    /// budget, which is exactly why [`crate::RestartSession`] releases its
-    /// session unconditionally on `Drop`.
-    #[error(
-        "the per-user-session limit of 64 concurrent Restart Manager sessions \
-         has been reached (Win32 error {code})"
-    )]
-    SessionLimit {
-        /// Raw Win32 error code.
-        code: u32,
-    },
+pub enum ErrorKind {
+    /// All 64 Restart Manager session slots in the user session are occupied.
+    SessionLimit,
+    /// A session key was malformed, expired, or otherwise rejected.
+    InvalidSessionKey,
+    /// A shutdown or restart operation was cancelled.
+    Cancelled,
+    /// Windows denied access to a resource or process.
+    AccessDenied,
+    /// Input could not be represented by the native API.
+    InvalidInput,
+    /// A collection was too large for the native `u32` count fields.
+    TooManyResources,
+    /// Another process-wide progress callback operation is active.
+    CallbackInUse,
+    /// The affected-application or filter list changed through every retry.
+    DataChanged,
+    /// Windows returned an internally inconsistent buffer.
+    MalformedOsData,
+    /// The weak cancellation capability refers to an ended session.
+    SessionEnded,
+    /// Another Windows error not covered by a more specific classification.
+    Os,
+}
 
-    /// The session key is malformed, or refers to a session that no longer
-    /// exists (relevant to [`crate::RestartSession::join`]).
-    #[error("invalid or expired Restart Manager session key (Win32 error {code})")]
-    InvalidSessionKey {
-        /// Raw Win32 error code.
-        code: u32,
-    },
-
-    /// `ERROR_CANCELLED`: the current shutdown/restart was cancelled, e.g.
-    /// via [`crate::RestartSession::cancel`].
-    #[error("the Restart Manager operation was cancelled (Win32 error {code})")]
-    Cancelled {
-        /// Raw Win32 error code.
-        code: u32,
-    },
-
-    /// `ERROR_ACCESS_DENIED`: the caller lacks the rights to act on a
-    /// registered resource (typically a service, or another user's process).
-    #[error("access denied by the Restart Manager (Win32 error {code})")]
-    AccessDenied {
-        /// Raw Win32 error code.
-        code: u32,
-    },
-
-    /// Any other Win32 failure returned by a `Rm*` function.
-    #[error("Restart Manager call failed (Win32 error {code})")]
-    Os {
-        /// Raw Win32 error code.
-        code: u32,
-    },
+/// An error returned by the safe Restart Manager API.
+///
+/// Its representation is private. Match on [`Error::kind`] and use
+/// [`Error::raw_os_error`] when the precise Win32 value matters.
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct Error {
+    kind: ErrorKind,
+    raw_os_error: Option<u32>,
+    message: String,
 }
 
 impl Error {
-    /// Returns the raw Win32 error code, regardless of the variant.
-    pub fn code(&self) -> u32 {
-        todo!()
+    /// Returns the stable classification for this error.
+    #[must_use]
+    pub const fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
+    /// Returns the original Win32 error code, when the failure came from Windows.
+    #[must_use]
+    pub const fn raw_os_error(&self) -> Option<u32> {
+        self.raw_os_error
+    }
+
+    pub(crate) fn new(
+        kind: ErrorKind,
+        raw_os_error: Option<u32>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            raw_os_error,
+            message: message.into(),
+        }
     }
 }
