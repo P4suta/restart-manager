@@ -1,6 +1,6 @@
 [package]
 name = "restart-manager"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -10,24 +10,44 @@ documentation = "https://docs.rs/restart-manager"
 keywords = ["windows", "restart-manager", "rstrtmgr", "file-lock", "ffi"]
 categories = ["os::windows-apis", "api-bindings"]
 readme = "README.md"
-exclude = [
-    "/.cargo",
-    "/.gitattributes",
-    "/.github",
-    "/api",
-    "/deny.toml",
-    "/xtask",
+include = [
+    "/src/**",
+    "/examples/**",
+    "/tests/**",
+    "/docs/adr/**",
+    "/docs/release.md",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/MIGRATION.md",
+    "/SECURITY.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/Cargo.toml",
+    "/Cargo.lock",
 ]
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+all-features = true
+
+[features]
+default = []
+tokio = ["dep:tokio"]
 
 [workspace]
 members = ["xtask"]
 resolver = "3"
 
-[target.'cfg(windows)'.dependencies]
+[dependencies]
 bitflags = "2"
 thiserror = "2"
+tokio = { version = "1", optional = true, features = ["sync"] }
+
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_System_Recovery",
     "Win32_System_RestartManager",
     "Win32_System_Threading",
 ] }

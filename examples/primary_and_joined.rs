@@ -5,11 +5,11 @@ fn main() -> Result<(), restart_manager::Error> {
 
     let primary = RestartSession::new()?;
     let transferred = primary.session_key().as_str().to_owned();
-    let key = SessionKey::from_str(&transferred)?;
+    let key = SessionKey::from_str(&transferred).expect("a generated key is valid");
     let mut joined = JoinedSession::join(&key)?;
-    joined.register_processes(&[restart_manager::UniqueProcess::current()?])?;
+    joined.register_processes([restart_manager::ProcessIdentity::current()?])?;
 
-    println!("joined session contains {}", joined.session_key());
+    println!("joined session contains {}", joined.session_key().as_str());
     joined.end()?;
     primary.end()
 }

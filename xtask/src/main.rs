@@ -50,9 +50,7 @@ fn fixture_restarted() -> DynResult {
 
 #[cfg(windows)]
 mod windows {
-    use std::ffi::OsStr;
     use std::fs::{self, OpenOptions};
-    use std::os::windows::ffi::OsStrExt;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::process::CommandExt;
     use std::path::{Path, PathBuf};
@@ -62,14 +60,13 @@ mod windows {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use restart_manager::{
-        ApplicationStatus, ErrorKind, FilterAction, FilterTarget, RestartSession, ShutdownOptions,
-        UniqueProcess,
+        ApplicationRestartOptions, ApplicationRestartRegistration, ApplicationStatus, ErrorKind,
+        FilterAction, FilterTarget, ProcessIdentity, RestartSession, ShutdownOptions,
     };
     use windows_sys::Win32::System::Console::{
         CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
         SetConsoleCtrlHandler,
     };
-    use windows_sys::Win32::System::Recovery::RegisterApplicationRestart;
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_CONSOLE, CREATE_NEW_PROCESS_GROUP, ExitProcess,
     };
@@ -108,7 +105,7 @@ mod windows {
         let mut cleanup = Cleanup::new(child, directory.clone());
         wait_for_path(&ready_path, Duration::from_secs(10))?;
 
-        let process = UniqueProcess::from_pid(child_pid)?;
+        let process = ProcessIdentity::from_pid(child_pid)?;
         let mut session = RestartSession::new()?;
         session.register_files([&lock_path])?;
         let report = session.affected_applications()?;
@@ -120,37 +117,53 @@ mod windows {
         }
 
         let target = FilterTarget::process(process);
-        session.set_filter(target.clone(), FilterAction::PreventShutdown)?;
-        session.shutdown()?;
+        session.set_filter(&target, FilterAction::PreventShutdown)?;
+        let pending = session.shutdown();
         thread::sleep(Duration::from_millis(200));
         if cleanup.child_mut().try_wait()?.is_some() {
             return Err("PreventShutdown filter did not keep the fixture alive".into());
         }
-        let masked = session.affected_applications()?.iter().any(|application| {
-            application.process().is_some_and(|p| p == process)
-                && application
-                    .status()
-                    .contains(ApplicationStatus::SHUTDOWN_MASKED)
-        });
+        let mut completion = pending.restart();
+        let masked = completion
+            .affected_applications()?
+            .iter()
+            .any(|application| {
+                application.process().is_some_and(|p| p == process)
+                    && application
+                        .status()
+                        .contains(ApplicationStatus::SHUTDOWN_MASKED)
+            });
         if !masked {
             return Err("affected report did not retain the shutdown-masked status bit".into());
         }
-        session.remove_filter(&target)?;
+        completion.end()?;
 
+        let mut session = RestartSession::new()?;
+        session.register_files([&lock_path])?;
         let mut shutdown_progress = Vec::new();
-        session.shutdown_with_progress(ShutdownOptions::default(), |progress| {
+        let pending = match session.shutdown_with_progress(ShutdownOptions::default(), |progress| {
             shutdown_progress.push(progress.percent_complete());
-        })?;
+        }) {
+            Ok(pending) => pending,
+            Err(not_started) => return Err(not_started.error().to_string().into()),
+        };
+        pending.shutdown_outcome().clone().into_result()?;
         wait_for_exit(cleanup.child_mut(), Duration::from_secs(10))?;
         assert_progress("shutdown", &shutdown_progress)?;
 
         let mut restart_progress = Vec::new();
-        session.restart_with_progress(|progress| {
+        let completion = match pending.restart_with_progress(|progress| {
             restart_progress.push(progress.percent_complete());
-        })?;
+        }) {
+            Ok(completion) => completion,
+            Err(not_started) => return Err(not_started.error().to_string().into()),
+        };
+        if let Some(restart) = completion.outcome().restart_outcome() {
+            restart.clone().into_result()?;
+        }
         wait_for_path(&restart_path, Duration::from_secs(10))?;
         assert_progress("restart", &restart_progress)?;
-        session.end()?;
+        completion.end()?;
 
         cleanup.finish();
         cancellation_e2e(&executable)?;
@@ -182,14 +195,9 @@ mod windows {
         }
 
         let restart_command = format!("fixture-restarted \"{}\"", restart_path.display());
-        let restart_command = wide_nul(OsStr::new(&restart_command))?;
-        // SAFETY: the command line is a live, NUL-terminated UTF-16 buffer.
-        let result = unsafe { RegisterApplicationRestart(restart_command.as_ptr(), 0) };
-        if result < 0 {
-            return Err(
-                format!("RegisterApplicationRestart failed with HRESULT {result:#x}").into(),
-            );
-        }
+        let _registration = ApplicationRestartRegistration::register(
+            ApplicationRestartOptions::new(restart_command),
+        )?;
         fs::write(ready_path, b"ready")?;
 
         loop {
@@ -257,7 +265,7 @@ mod windows {
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let operation = thread::spawn(move || {
             let mut notified = false;
-            let result = session.shutdown_with_progress(
+            session.shutdown_with_progress(
                 ShutdownOptions::new().with_force_if_hung(true),
                 move |_| {
                     if !notified {
@@ -265,39 +273,35 @@ mod windows {
                         let _ = started_tx.send(());
                     }
                 },
-            );
-            (session, result)
+            )
         });
         started_rx
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| "shutdown returned before reporting cancellable progress")?;
         cancellation.cancel()?;
-        let (_session, result) = operation
+        let result = operation
             .join()
             .map_err(|_| "cancellation shutdown thread panicked")?;
-        match result {
-            Err(error) if error.kind() == ErrorKind::Cancelled => {}
+        let pending = match result {
+            Ok(pending) => pending,
             Err(error) => {
+                return Err(format!("shutdown did not start: {}", error.error()).into());
+            }
+        };
+        match pending.shutdown_outcome().error() {
+            Some(error) if error.kind() == ErrorKind::Cancelled => {}
+            Some(error) => {
                 return Err(
                     format!("shutdown returned the wrong cancellation error: {error}").into(),
                 );
             }
-            Ok(()) => return Err("shutdown completed instead of observing cancellation".into()),
+            None => return Err("shutdown completed instead of observing cancellation".into()),
         }
         if cleanup.child_mut().try_wait()?.is_some() {
             return Err("cancelled shutdown unexpectedly terminated its fixture".into());
         }
         cleanup.finish();
         Ok(())
-    }
-
-    fn wide_nul(value: &OsStr) -> DynResult<Vec<u16>> {
-        let mut value = value.encode_wide().collect::<Vec<_>>();
-        if value.contains(&0) {
-            return Err("restart command contains an embedded NUL".into());
-        }
-        value.push(0);
-        Ok(value)
     }
 
     fn required_path(value: Option<std::ffi::OsString>, name: &str) -> DynResult<PathBuf> {
@@ -333,12 +337,12 @@ mod windows {
         Err("timed out waiting for the fixture to release its file".into())
     }
 
-    fn assert_progress(operation: &str, values: &[u32]) -> DynResult {
+    fn assert_progress(operation: &str, values: &[u8]) -> DynResult {
         if values.is_empty() {
             return Err(format!("{operation} did not report progress").into());
         }
         if values.iter().any(|value| *value > 100)
-            || values.windows(2).any(|pair| pair[0] > pair[1])
+            || values.windows(2).any(|pair| pair[0] >= pair[1])
         {
             return Err(format!("{operation} progress was out of range or decreased").into());
         }

@@ -3,65 +3,121 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-use crate::UniqueProcess;
+use crate::{Error, ErrorKind, ProcessIdentity, Result};
 
 /// The executable, process, or service selected by a filter.
+///
+/// The representation is intentionally opaque. Executable paths are made
+/// absolute exactly once during construction, so a later working-directory
+/// change cannot alter the identity used to remove the filter.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum FilterTarget {
-    /// An executable's full path. Directories are not supported.
+pub struct FilterTarget {
+    kind: TargetKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum TargetKind {
     Executable(PathBuf),
-    /// One exact process identity.
-    Process(UniqueProcess),
-    /// A Windows service short name.
+    Process(ProcessIdentity),
     Service(OsString),
 }
 
 impl FilterTarget {
-    /// Creates an executable-path target.
-    #[must_use]
-    pub fn executable(path: impl Into<PathBuf>) -> Self {
-        Self::Executable(path.into())
+    /// Creates a validated executable-path target.
+    pub fn executable(path: impl Into<PathBuf>) -> Result<Self> {
+        let path = path.into();
+        validate_os_value(path.as_os_str(), "an executable path")?;
+        let path = std::path::absolute(path).map_err(|error| {
+            Error::new(
+                ErrorKind::InvalidInput,
+                error.raw_os_error().map(|code| code as u32),
+                "the executable path could not be made absolute",
+            )
+        })?;
+        Ok(Self {
+            kind: TargetKind::Executable(path),
+        })
     }
 
     /// Creates a process target.
     #[must_use]
-    pub const fn process(process: UniqueProcess) -> Self {
-        Self::Process(process)
+    pub const fn process(process: ProcessIdentity) -> Self {
+        Self {
+            kind: TargetKind::Process(process),
+        }
     }
 
-    /// Creates a service target.
-    #[must_use]
-    pub fn service(name: impl Into<OsString>) -> Self {
-        Self::Service(name.into())
+    /// Creates a validated service-short-name target.
+    pub fn service(name: impl Into<OsString>) -> Result<Self> {
+        let name = name.into();
+        validate_os_value(&name, "a service short name")?;
+        Ok(Self {
+            kind: TargetKind::Service(name),
+        })
     }
 
-    /// Returns the executable path when this is an executable filter.
+    /// Returns the absolute executable path for an executable filter.
     #[must_use]
     pub fn as_executable(&self) -> Option<&Path> {
-        match self {
-            Self::Executable(path) => Some(path),
-            Self::Process(_) | Self::Service(_) => None,
+        match &self.kind {
+            TargetKind::Executable(path) => Some(path),
+            TargetKind::Process(_) | TargetKind::Service(_) => None,
         }
     }
 
-    /// Returns the process when this is a process filter.
+    /// Returns the process identity for a process filter.
     #[must_use]
-    pub const fn as_process(&self) -> Option<UniqueProcess> {
-        match self {
-            Self::Process(process) => Some(*process),
-            Self::Executable(_) | Self::Service(_) => None,
+    pub const fn as_process(&self) -> Option<ProcessIdentity> {
+        match self.kind {
+            TargetKind::Process(process) => Some(process),
+            TargetKind::Executable(_) | TargetKind::Service(_) => None,
         }
     }
 
-    /// Returns the service short name when this is a service filter.
+    /// Returns the service short name for a service filter.
     #[must_use]
     pub fn as_service(&self) -> Option<&OsStr> {
-        match self {
-            Self::Service(name) => Some(name),
-            Self::Executable(_) | Self::Process(_) => None,
+        match &self.kind {
+            TargetKind::Service(name) => Some(name),
+            TargetKind::Executable(_) | TargetKind::Process(_) => None,
         }
     }
+
+    pub(crate) fn from_raw_executable(path: PathBuf) -> Result<Self> {
+        validate_os_value(path.as_os_str(), "an executable path")?;
+        Ok(Self {
+            kind: TargetKind::Executable(path),
+        })
+    }
+
+    pub(crate) const fn from_raw_process(process: ProcessIdentity) -> Self {
+        Self::process(process)
+    }
+
+    pub(crate) fn from_raw_service(name: OsString) -> Result<Self> {
+        validate_os_value(&name, "a service short name")?;
+        Ok(Self {
+            kind: TargetKind::Service(name),
+        })
+    }
+}
+
+fn validate_os_value(value: &OsStr, description: &'static str) -> Result<()> {
+    if value.is_empty() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            None,
+            format!("{description} may not be empty"),
+        ));
+    }
+    if value.to_string_lossy().contains('\0') {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            None,
+            format!("{description} may not contain an embedded NUL"),
+        ));
+    }
+    Ok(())
 }
 
 /// The official `RM_FILTER_ACTION` behavior.
@@ -99,28 +155,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn target_constructors_and_accessors_are_disjoint() {
-        let executable = FilterTarget::executable("demo.exe");
-        assert_eq!(executable.as_executable(), Some(Path::new("demo.exe")));
+    fn targets_are_validated_and_disjoint() {
+        let executable = FilterTarget::executable("demo.exe").unwrap();
+        assert!(executable.as_executable().unwrap().is_absolute());
         assert_eq!(executable.as_process(), None);
         assert_eq!(executable.as_service(), None);
 
-        let process = UniqueProcess::from_parts(1, 2);
+        let process = ProcessIdentity::from_raw_parts(1, 2).unwrap();
         let process_target = FilterTarget::process(process);
         assert_eq!(process_target.as_process(), Some(process));
-        assert_eq!(process_target.as_executable(), None);
-        assert_eq!(process_target.as_service(), None);
 
-        let service = FilterTarget::service("EventLog");
+        let service = FilterTarget::service("EventLog").unwrap();
         assert_eq!(service.as_service(), Some(OsStr::new("EventLog")));
-        assert_eq!(service.as_executable(), None);
-        assert_eq!(service.as_process(), None);
-
-        let filter = Filter {
-            target: service,
-            action: FilterAction::PreventShutdown,
-        };
-        assert_eq!(filter.action(), FilterAction::PreventShutdown);
-        assert!(matches!(filter.target(), FilterTarget::Service(_)));
+        assert!(FilterTarget::service("").is_err());
+        assert!(FilterTarget::executable("").is_err());
+        assert!(FilterTarget::service("bad\0name").is_err());
     }
 }

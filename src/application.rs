@@ -9,16 +9,38 @@ use bitflags::bitflags;
 /// Pairing both values prevents a recycled PID from identifying an unrelated
 /// newer process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct UniqueProcess {
+pub struct ProcessIdentity {
     pid: u32,
-    start_time: u64,
+    creation_time_100ns_since_1601: u64,
 }
 
-impl UniqueProcess {
-    /// Builds an identity from a process ID and a `FILETIME` tick count.
-    #[must_use]
-    pub const fn from_parts(pid: u32, start_time: u64) -> Self {
-        Self { pid, start_time }
+impl ProcessIdentity {
+    /// Builds an identity from a process ID and a Windows `FILETIME` value.
+    ///
+    /// The creation time is counted in 100-nanosecond units since
+    /// 1601-01-01 UTC. PID 0 and the native invalid sentinel are rejected.
+    pub fn from_raw_parts(pid: u32, creation_time_100ns_since_1601: u64) -> crate::Result<Self> {
+        if pid == 0 || pid == u32::MAX {
+            return Err(crate::Error::new(
+                crate::ErrorKind::InvalidInput,
+                None,
+                "a process identity PID must be neither zero nor the native invalid sentinel",
+            ));
+        }
+        Ok(Self {
+            pid,
+            creation_time_100ns_since_1601,
+        })
+    }
+
+    pub(crate) const fn from_raw_parts_unchecked(
+        pid: u32,
+        creation_time_100ns_since_1601: u64,
+    ) -> Self {
+        Self {
+            pid,
+            creation_time_100ns_since_1601,
+        }
     }
 
     /// Returns the process identifier.
@@ -29,8 +51,8 @@ impl UniqueProcess {
 
     /// Returns the creation time in 100-nanosecond ticks since 1601-01-01 UTC.
     #[must_use]
-    pub const fn start_time(self) -> u64 {
-        self.start_time
+    pub const fn creation_time_100ns_since_1601(self) -> u64 {
+        self.creation_time_100ns_since_1601
     }
 }
 
@@ -135,14 +157,14 @@ bitflags! {
 }
 
 /// One application or service using a registered resource.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AffectedApplication {
     pub(crate) display_name: OsString,
     pub(crate) service_name: Option<OsString>,
     pub(crate) application_type: ApplicationType,
     pub(crate) status: ApplicationStatus,
     pub(crate) restartable: bool,
-    pub(crate) process: Option<UniqueProcess>,
+    pub(crate) process: Option<ProcessIdentity>,
     pub(crate) terminal_session_id: Option<u32>,
 }
 
@@ -179,7 +201,7 @@ impl AffectedApplication {
 
     /// Returns the process identity, if this entry has a valid process.
     #[must_use]
-    pub const fn process(&self) -> Option<UniqueProcess> {
+    pub const fn process(&self) -> Option<ProcessIdentity> {
         self.process
     }
 
@@ -191,7 +213,7 @@ impl AffectedApplication {
 }
 
 /// A reusable affected-application report plus its reboot reasons.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AffectedApplications {
     pub(crate) applications: Vec<AffectedApplication>,
     pub(crate) reboot_reasons: RebootReasons,
@@ -276,9 +298,9 @@ mod tests {
 
     #[test]
     fn affected_report_accessors_and_iterators_are_reusable() {
-        let process = UniqueProcess::from_parts(42, 99);
+        let process = ProcessIdentity::from_raw_parts(42, 99).unwrap();
         assert_eq!(process.pid(), 42);
-        assert_eq!(process.start_time(), 99);
+        assert_eq!(process.creation_time_100ns_since_1601(), 99);
         let application = AffectedApplication {
             display_name: OsString::from("display"),
             service_name: Some(OsString::from("service")),
@@ -306,5 +328,12 @@ mod tests {
         assert_eq!(report.iter().count(), 1);
         assert_eq!((&report).into_iter().count(), 1);
         assert_eq!(report.into_iter().count(), 1);
+    }
+
+    #[test]
+    fn process_identity_rejects_native_invalid_pids() {
+        assert!(ProcessIdentity::from_raw_parts(0, 1).is_err());
+        assert!(ProcessIdentity::from_raw_parts(u32::MAX, 1).is_err());
+        assert!(ProcessIdentity::from_raw_parts(1, 1).is_ok());
     }
 }

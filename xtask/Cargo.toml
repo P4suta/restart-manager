@@ -10,6 +10,5 @@ publish = false
 restart-manager = { path = ".." }
 windows-sys = { version = "0.61", features = [
     "Win32_System_Console",
-    "Win32_System_Recovery",
     "Win32_System_Threading",
 ] }

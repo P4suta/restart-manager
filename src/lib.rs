@@ -17,9 +17,10 @@
 //! for application in &report {
 //!     println!("locked by: {:?}", application.display_name());
 //! }
-//! session.shutdown_with_options(ShutdownOptions::default())?;
+//! let pending = session.shutdown_with_options(ShutdownOptions::default());
 //! // Replace or update the registered files here.
-//! session.restart()?;
+//! let completion = pending.restart();
+//! completion.end()?;
 //! # Ok(())
 //! # }
 //! # #[cfg(not(windows))]
@@ -39,33 +40,72 @@
 //!
 //! # Platform support
 //!
-//! On non-Windows targets the crate compiles but exposes no public items.
+//! All domain and session types are available on every target. Pure input
+//! validation behaves identically everywhere; operations that require Windows
+//! return [`ErrorKind::UnsupportedPlatform`].
+//!
+//! # Typestate guarantees
+//!
+//! A joined installer cannot query or control the primary workflow:
+//!
+//! ```compile_fail
+//! fn invalid(joined: &mut restart_manager::JoinedSession) {
+//!     let _ = joined.affected_applications();
+//! }
+//! ```
+//!
+//! Restart is not available before a shutdown attempt:
+//!
+//! ```compile_fail
+//! fn invalid(session: restart_manager::RestartSession) {
+//!     let _ = session.restart();
+//! }
+//! ```
+//!
+//! A pending recovery state cannot register resources, manipulate filters, or
+//! end the native session:
+//!
+//! ```compile_fail
+//! fn invalid(mut pending: restart_manager::RestartPending) {
+//!     let batch = restart_manager::ResourceBatch::new();
+//!     let _ = pending.register_resources(&batch);
+//!     let _ = pending.end();
+//! }
+//! ```
+//!
+//! Consuming a state prevents a second operation on the same value:
+//!
+//! ```compile_fail
+//! fn invalid(session: restart_manager::RestartSession) {
+//!     let _pending = session.shutdown();
+//!     let _ = session.end();
+//! }
+//! ```
 #![deny(unsafe_code)]
 
-#[cfg(windows)]
 mod application;
-#[cfg(windows)]
+mod application_restart;
 mod error;
-#[cfg(windows)]
 mod filter;
-#[cfg(windows)]
 mod resource;
-#[cfg(windows)]
 mod session;
-#[cfg(windows)]
 mod shutdown;
-#[cfg(windows)]
 mod sys;
+#[cfg(feature = "tokio")]
+pub mod tokio;
 
-#[cfg(windows)]
 pub use crate::{
     application::{
         AffectedApplication, AffectedApplications, ApplicationStatus, ApplicationType,
-        RebootReasons, UniqueProcess,
+        ProcessIdentity, RebootReasons,
     },
-    error::{Error, ErrorKind, Result},
+    application_restart::{ApplicationRestartOptions, ApplicationRestartRegistration},
+    error::{Error, ErrorKind, ParseSessionKeyError, Result},
     filter::{Filter, FilterAction, FilterTarget},
-    resource::ResourceSet,
-    session::{CancellationHandle, JoinedSession, RestartSession, SessionKey},
-    shutdown::{Progress, ShutdownOptions},
+    resource::ResourceBatch,
+    session::{
+        CancellationHandle, JoinedSession, OperationNotStarted, RecoveryCompletion, RestartPending,
+        RestartSession, SessionKey,
+    },
+    shutdown::{OperationOutcome, Progress, RecoveryOutcome, ShutdownOptions},
 };

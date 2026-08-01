@@ -3,17 +3,17 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-use crate::UniqueProcess;
+use crate::ProcessIdentity;
 
 /// Files, processes, and services to register in one native call.
 #[derive(Debug, Clone, Default)]
-pub struct ResourceSet {
+pub struct ResourceBatch {
     files: Vec<PathBuf>,
-    processes: Vec<UniqueProcess>,
+    processes: Vec<ProcessIdentity>,
     services: Vec<OsString>,
 }
 
-impl ResourceSet {
+impl ResourceBatch {
     /// Creates an empty resource collection.
     #[must_use]
     pub const fn new() -> Self {
@@ -27,7 +27,8 @@ impl ResourceSet {
     /// Adds a file path and returns the collection for chaining.
     ///
     /// Directories are not supported. Relative paths are made absolute at
-    /// registration time without checking existence or resolving symlinks.
+    /// registration time; other missing paths are retained without
+    /// canonicalizing or resolving symlinks.
     #[must_use]
     pub fn file(mut self, file: impl Into<PathBuf>) -> Self {
         self.files.push(file.into());
@@ -36,7 +37,7 @@ impl ResourceSet {
 
     /// Adds a process and returns the collection for chaining.
     #[must_use]
-    pub fn process(mut self, process: UniqueProcess) -> Self {
+    pub fn process(mut self, process: ProcessIdentity) -> Self {
         self.processes.push(process);
         self
     }
@@ -55,7 +56,7 @@ impl ResourceSet {
     }
 
     /// Adds a process in place.
-    pub fn add_process(&mut self, process: UniqueProcess) -> &mut Self {
+    pub fn add_process(&mut self, process: ProcessIdentity) -> &mut Self {
         self.processes.push(process);
         self
     }
@@ -82,7 +83,7 @@ impl ResourceSet {
         self.files.iter().map(PathBuf::as_path)
     }
 
-    pub(crate) fn processes(&self) -> &[UniqueProcess] {
+    pub(crate) fn processes(&self) -> &[ProcessIdentity] {
         &self.processes
     }
 
@@ -97,8 +98,8 @@ mod tests {
 
     #[test]
     fn builder_and_mutating_forms_cover_every_resource_kind() {
-        let process = UniqueProcess::from_parts(1, 2);
-        let resources = ResourceSet::new()
+        let process = ProcessIdentity::from_raw_parts(1, 2).unwrap();
+        let resources = ResourceBatch::new()
             .file("one.txt")
             .process(process)
             .service("EventLog");
@@ -114,7 +115,7 @@ mod tests {
             [OsStr::new("EventLog")]
         );
 
-        let mut resources = ResourceSet::default();
+        let mut resources = ResourceBatch::default();
         assert!(resources.is_empty());
         resources
             .add_file("two.txt")
