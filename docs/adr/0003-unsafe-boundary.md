@@ -13,7 +13,7 @@ argument on its own.
 ## Decision
 
 The crate root carries `#![deny(unsafe_code)]`. The private `src/sys.rs`
-module is the single place allowed to opt back in with
+module is the single logical boundary allowed to opt back in with
 `#![allow(unsafe_code)]`; it exposes a minimal, already-safe interface that
 the rest of the crate consumes.
 
@@ -24,3 +24,6 @@ the rest of the crate consumes.
   ordinary safe Rust.
 - Raw handles, pointers, callbacks, UTF-16 buffers, and `windows-sys` types do
   not cross the adapter boundary.
+- The boundary is organized by lifecycle, input/UTF-16, application lists,
+  filter buffers, callbacks, and application restart responsibilities. Its
+  unsupported backend contains no unsafe code.

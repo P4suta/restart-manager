@@ -12,12 +12,13 @@ need the Restart Manager.
 
 ## Decision
 
-v0.1 exposes a purely blocking API and depends on no async runtime. Async
-support is planned as an opt-in `tokio` cargo feature that wraps the
-blocking calls (`spawn_blocking`) and forwards progress through a channel.
+The default API is blocking and depends on no async runtime. Version 1.0 also
+offers an optional Tokio facade whose dedicated worker design is recorded in
+ADR 0006. Other runtimes can move the Send blocking typestate into their own
+blocking facility.
 
 ## Consequences
 
 - Zero runtime dependencies for the common installer/CLI case.
-- The blocking API is canonical; the future async layer must add no new
-  semantics, only scheduling.
+- The blocking API is canonical; the optional Tokio layer preserves its
+  typestate and recovery semantics.

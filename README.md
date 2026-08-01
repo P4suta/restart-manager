@@ -1,226 +1,221 @@
 # restart-manager
 
-Safe blocking Rust bindings for the Windows Restart Manager (`rstrtmgr.dll`).
-The crate finds applications using files, processes, or services, can ask them
-to shut down, and can restart applications that support restart.
+Safe Restart Manager workflows for Rust.
 
-The API is architecture-first: primary and joined installer roles are separate
-types, every session operation needs `&mut self`, native handles never escape,
-and all `unsafe` code is confined to the private Win32 adapter.
+Version 1.0 turns the Windows Restart Manager API into an owned recovery
+protocol: once shutdown is attempted, the only normal choices are restart or
+an explicit decision to leave applications stopped.
 
-## Quick start
+## Core workflow
 
-```rust
-use restart_manager::{RestartSession, ShutdownOptions};
+```rust,no_run
+use restart_manager::{OperationOutcome, RestartSession, ShutdownOptions};
 
-fn main() -> Result<(), restart_manager::Error> {
+fn update_file() -> Result<(), restart_manager::Error> {
     let mut session = RestartSession::new()?;
-    session.register_files([r"C:\some\locked\file.dll"])?;
+    session.register_files([r"C:\product\component.dll"])?;
 
-    let report = session.affected_applications()?;
-    for application in &report {
-        println!(
-            "locked by: {} ({:?})",
+    for application in &session.affected_applications()? {
+        eprintln!(
+            "{} (restartable: {})",
             application.display_name().to_string_lossy(),
-            application.application_type(),
+            application.is_restartable()
         );
     }
 
-    session.shutdown_with_options(ShutdownOptions::default())?;
-    // Replace, move, or update the registered files here.
-    session.restart()?;
+    let pending = session.shutdown_with_options(
+        ShutdownOptions::new().with_require_restart_registration(true),
+    );
+
+    if let OperationOutcome::Failed(error) = pending.shutdown_outcome() {
+        let error = error.clone();
+        pending.restart().end()?;
+        return Err(error);
+    }
+
+    // Replace the registered files here.
+
+    let completion = pending.restart();
+    if let Some(restart) = completion.outcome().restart_outcome() {
+        restart.clone().into_result()?;
+    }
+    completion.end()?;
     Ok(())
-} // Drop always ends the session.
+}
 ```
 
-`shutdown()` is the graceful shorthand. Forced termination is deliberately
-opt-in:
+`RestartSession` has no `restart` method. Consuming shutdown produces
+`RestartPending`, which alone has `restart`, `restart_with_progress`, and
+`leave_stopped`. Shutdown and restart outcomes are retained independently, so
+a restart failure never overwrites a preceding shutdown failure.
 
-```rust
-# use restart_manager::ShutdownOptions;
-let options = ShutdownOptions::new().with_force_if_hung(true);
-```
+Dropping an armed `RestartPending` makes one best-effort restart attempt and
+then ends the session. This protects early `?`, panics, and partially
+successful shutdown. `leave_stopped` is the only explicit opt-out.
+`mem::forget`, process abort, and `process::exit` do not run destructors and
+are outside this guarantee.
 
-Forced shutdown can lose unsaved data in target applications. Do not enable it
-as a routine fallback without telling the user.
+## Resources and reports
 
-## Installer roles
+`ResourceBatch` groups files, exact process identities, and service short
+names into one native registration call. Duplicates are retained. Registering
+an empty batch is a successful no-op.
 
-`RestartSession` is the primary installer. It owns shutdown, restart,
-cancellation, and filter capabilities. `JoinedSession` is a secondary installer
-and can only register resources and query the shared affected-application
-report.
+```rust,no_run
+use restart_manager::{ProcessIdentity, ResourceBatch, RestartSession};
 
-```rust
-# use restart_manager::{JoinedSession, RestartSession};
-let primary = RestartSession::new()?;
-let serialized = primary.session_key().as_str().to_owned();
-
-// Transfer `serialized` to the cooperating process through trusted IPC.
-let key = serialized.parse()?;
-let mut joined = JoinedSession::join(&key)?;
-joined.register_files([r"C:\product\component.dll"])?;
-# Ok::<(), restart_manager::Error>(())
-```
-
-A `SessionKey` accepts exactly 32 ASCII hexadecimal characters. `Debug` redacts
-its value; `as_str()` and `Display` expose it only when requested explicitly.
-
-## Batch registration
-
-`ResourceSet` combines all resource kinds into one `RmRegisterResources` call:
-
-```rust
-# use restart_manager::{ResourceSet, RestartSession, UniqueProcess};
-let current = UniqueProcess::current()?;
-let resources = ResourceSet::new()
-    .file(r"C:\product\app.exe")
-    .process(current)
+# fn run() -> Result<(), restart_manager::Error> {
+let process = ProcessIdentity::current()?;
+let batch = ResourceBatch::new()
+    .file(r"C:\product\component.dll")
+    .process(process)
     .service("EventLog");
-
 let mut session = RestartSession::new()?;
-session.register_resources(&resources)?;
-# Ok::<(), restart_manager::Error>(())
+session.register_resources(&batch)?;
+# session.end()
+# }
 ```
 
-The convenience methods `register_files`, `register_processes`, and
-`register_services` are available on both session roles.
+`ProcessIdentity::from_raw_parts` rejects PID 0 and the native invalid
+sentinel. Its creation-time value and getter are explicitly measured in
+100-nanosecond units since 1601-01-01 UTC.
 
-File paths may be relative. They are made absolute at registration time, but
-the crate does not resolve symlinks, canonicalize, or check existence.
-Restart Manager does not support directory registration; these APIs are for
-files and executable paths only. Embedded NULs and native count overflows are
-rejected before FFI.
+`AffectedApplications` and `AffectedApplication` are reusable,
+`PartialEq + Eq` reports. Names remain `OsString`, unknown status bits are
+retained, future application kinds remain lossless, and invalid native process
+or terminal-session IDs become `None`.
 
-## Reports and forward compatibility
+## Primary and joined roles
 
-`affected_applications()` returns an iterable `AffectedApplications` snapshot.
-It keeps both the entries and `RebootReasons`, so repeated iteration cannot
-silently lose the reboot information.
+A primary `RestartSession` owns reporting, filters, shutdown, cancellation,
+and recovery. A secondary `JoinedSession` can only register resources,
+inspect the session key, and end its joined handle. This follows the secondary
+installer protocol and prevents a joined installer from driving the primary
+workflow.
 
-- Display and service names are `OsStr`/`OsString`, preserving all Windows
-  UTF-16 data without lossy conversion.
-- Invalid process and Terminal Services identifiers become `Option::None`.
-- `ApplicationStatus` is a bitmask and retains unknown bits. Windows status
-  values are an OR-able history, not a single enum state.
-- `ApplicationType::Unknown` is the documented `RmUnknownApp` value;
-  `ApplicationType::Unrecognized(raw)` preserves future values.
-- `ApplicationType::Critical` means Windows reported `RmCritical`; it should
-  not be interpreted as only the process criticality flag.
+`SessionKey` uses a dedicated `ParseSessionKeyError`, redacts `Debug`, and
+does not implement `Display`. Transfer it only through explicit `as_str` or
+`into_string`.
 
 ## Filters
 
-Filters apply only to the primary installer:
+`FilterTarget` is opaque and validated. Executable paths are made absolute
+when the target is created, so changing the working directory between
+`set_filter` and `remove_filter` does not change filter identity. Empty
+values and embedded NULs are rejected.
 
-```rust
+```rust,no_run
 # use restart_manager::{FilterAction, FilterTarget, RestartSession};
-# let mut session = RestartSession::new()?;
-let target = FilterTarget::executable(r"C:\product\do-not-restart.exe");
-session.set_filter(target.clone(), FilterAction::PreventRestart)?;
-
-for filter in session.filters()? {
-    println!("{:?}: {:?}", filter.target(), filter.action());
-}
+# fn run() -> Result<(), restart_manager::Error> {
+let mut session = RestartSession::new()?;
+let target = FilterTarget::executable(r"C:\product\app.exe")?;
+session.set_filter(&target, FilterAction::PreventRestart)?;
 session.remove_filter(&target)?;
-# Ok::<(), restart_manager::Error>(())
+# session.end()
+# }
 ```
 
-The two Windows actions are represented exactly:
+## Application-side restart registration
 
-- `PreventRestart`: shutdown is allowed, but restart is masked.
-- `PreventShutdown`: both shutdown and restart are masked.
+`RmRestart` can recreate an application only if that application registered
+itself. The process-side capability is public:
 
-Targets are an executable's full path, an exact `UniqueProcess`, or a service
-short name.
+```rust,no_run
+use restart_manager::{
+    ApplicationRestartOptions, ApplicationRestartRegistration,
+};
+
+# fn run() -> Result<(), restart_manager::Error> {
+let options = ApplicationRestartOptions::new("--restore-session")
+    .with_restart_on_crash(false);
+let mut registration = ApplicationRestartRegistration::register(options)?;
+registration.update(ApplicationRestartOptions::new("--restore-session=2"))?;
+registration.unregister()?;
+# Ok(())
+# }
+```
+
+Arguments do not include the executable name. They are lossless `OsString`
+values, redacted from `Debug`, and validated for embedded NULs and the
+1024 UTF-16 code-unit limit before FFI. A process-global lease rejects duplicate
+crate-managed ownership. Explicit unregister failure stays armed so destruction
+makes one best-effort retry.
 
 ## Progress and cancellation
 
-The native callback has no context pointer, so callback-bearing operations use
-one process-global lease. A second concurrent callback operation fails
-immediately with `ErrorKind::CallbackInUse`. Callbacks are `FnMut(Progress) +
-Send`; values are bounded to `0..=100` and made non-decreasing. A callback panic
-is caught at the FFI boundary and resumed after the Win32 call returns.
+Blocking progress callbacks receive validated `Progress` values in strictly
+increasing order within `0..=100`. Invalid native samples are suppressed and
+reported as `MalformedOsData`. Only one callback-bearing operation can own the
+process-global native callback slot; another returns
+`OperationNotStarted<T>` with both the original typestate and
+`ErrorKind::CallbackInUse`.
 
-Use `CancellationHandle` for the one operation intentionally allowed from a
-different thread:
+Callback panics are contained at the ABI boundary. Priority is deterministic:
+callback panic first, then native error, then progress-protocol error.
 
-```rust
-# use restart_manager::RestartSession;
-# let mut session = RestartSession::new()?;
-let cancellation = session.cancellation_handle();
-std::thread::scope(|scope| {
-    scope.spawn(move || {
-        // A Ctrl-C handler or supervisor can own this clone.
-        let _ = cancellation.cancel();
-    });
-    let _ = session.shutdown();
-});
-# Ok::<(), restart_manager::Error>(())
-```
+`CancellationHandle` is weak and thread-safe, so keeping it does not retain
+one of the 64 native session slots.
 
-The capability uses weak ownership, so retaining it never consumes one of
-Windows' 64 session slots. During `cancel()` it temporarily pins the session and
-serializes against `RmEndSession`.
+## Tokio feature
 
-## Shutdown and restart limitations
+The default API has no async runtime dependency. Enable `tokio` for
+`restart_manager::tokio::{RestartSession, JoinedSession, RestartPending,
+RecoveryCompletion}`.
 
-- Graceful shutdown can fail when an application ignores the Windows shutdown
-  protocol. Inspect the refreshed application statuses after failure.
-- `with_force_if_hung(true)` may terminate unresponsive programs and lose data.
-- Restart works only for services and applications that called
-  `RegisterApplicationRestart`; Restart Manager cannot recreate arbitrary
-  processes.
-- `with_only_registered(true)` prevents any shutdown unless every affected
-  application can be restarted.
-- Windows respects user and Terminal Services session boundaries. Elevated or
-  service installers cannot use Restart Manager to control applications in a
-  different interactive session.
-- `RmCritical` and non-empty `RebootReasons` can mean a system reboot is needed
-  before work can safely continue.
+Each async session owns one dedicated standard worker thread. That worker alone
+owns the blocking typestate and processes commands in FIFO order. Tokio
+`oneshot` channels carry results and `watch` channels carry cloneable,
+coalescing progress through `ProgressReceiver`; user callbacks never run on
+the worker.
 
-## Errors and lifecycle
+Dropping a shutdown future requests best-effort cancellation, after which the
+worker recovers partially stopped applications and ends. Dropping a restart
+future detaches it so restart finishes before cleanup. Other runtimes can move
+the `Send` blocking typestate into their own blocking facility.
 
-`Error` has a private representation. `Error::kind()` is the stable semantic
-classification and `Error::raw_os_error()` preserves a Win32 code when one
-exists.
+## Platform behavior
 
-Dropping either session role calls `RmEndSession` exactly once. Call `end(self)`
-only when an explicit end error must be reported. RAII is important because
-Windows permits only 64 concurrent Restart Manager sessions per user session.
+All public domain and session types exist on every target. Pure validation is
+portable. Calls that require Windows return
+`ErrorKind::UnsupportedPlatform`; they are not hidden with target cfg.
 
-## Platform and MSRV
+The stable `ErrorKind` classification includes platform, registry, reboot,
+partial shutdown/restart, sequencing, filter, allocation, application lease,
+and async-worker failures. `raw_os_error` preserves Win32 codes and
+`raw_hresult` preserves application-restart HRESULTs.
 
-The public API exists only on Windows. The crate deliberately compiles with no
-public items on non-Windows targets so platform-generic workspaces can still run
-`cargo check` and documentation tooling.
+## Limits
 
-- Version: 0.1.0
+- Restart Manager does not accept directories as registered file resources.
+- Graceful shutdown can fail when an application ignores its shutdown protocol.
+- Forced shutdown is opt-in and can lose application data.
+- Restart applies only to services and applications registered for restart.
+- Windows user, privilege, and Terminal Services boundaries still apply.
+- Forced fallback, process killing, file replacement, rollback, SCM fallback,
+  WER recovery callbacks, serde, tracing, and a generic workflow DSL are not
+  part of 1.0.
+
+## Compatibility and checks
+
+- Version: 1.0.0
 - Edition: Rust 2024
 - MSRV: Rust 1.88
-- Runtime model: blocking only
-- Normal dependencies: `windows-sys`, `thiserror`, and `bitflags`
-
-## Repository checks
-
-On Windows:
+- Default runtime model: blocking
+- Normal dependencies: `windows-sys`, `thiserror`, `bitflags`, and optional
+  `tokio`
 
 ```text
-cargo test --workspace --all-targets -- --test-threads=1
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-targets --all-features --locked -- --test-threads=1
+cargo test --doc --all-features --locked
 cargo xtask e2e
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-cargo publish --dry-run
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --locked --no-deps
+cargo package --locked
 ```
 
-`cargo xtask e2e` creates only dedicated fixture processes and temporary files.
-It verifies exclusive lock detection, graceful file release, registered
-restart, progress, filter suppression, cross-thread cancellation, and cleanup
-on all exit paths.
-
-Architecture decisions live in [`docs/adr`](docs/adr). The repository CI also
-checks MSRV/stable, Windows 2022/latest, x86_64/i686/aarch64 compile targets,
-non-Windows compilation, public API changes, dependency policy, package
-consumption, and at least 90% line/region/function coverage.
+See [MIGRATION.md](MIGRATION.md), [CHANGELOG.md](CHANGELOG.md), and
+[docs/adr](docs/adr) for the compatibility and design record.
 
 ## License
 

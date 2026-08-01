@@ -12,9 +12,9 @@ API anyway.
 
 ## Decision
 
-Bind through `windows-sys 0.61` with only the `Win32_Foundation` and
-`Win32_System_RestartManager` features enabled — the same judgement call
-made for conpty-oxide.
+Bind through `windows-sys 0.61` with only the Foundation, RestartManager,
+Recovery, and Threading feature groups needed by native sessions, application
+restart registration, and process creation-time lookup.
 
 ## Consequences
 

@@ -18,9 +18,12 @@ query, shutdown, and end calls possible on the same native handle.
 
 Expose `RestartSession` for the primary installer and `JoinedSession` for a
 secondary installer. Both own a private `SessionCore`; only the primary type
-publishes shutdown, restart, filters, and cancellation.
+publishes reporting, shutdown, filters, and cancellation. The joined role can
+only register resources, inspect its key, and end.
 
-All session operations take `&mut self`. Cancellation is a separate
+Registration, reporting, and filter operations take `&mut self`. Shutdown
+consumes the primary state and enters the recovery typestate from ADR 0005.
+Cancellation is a separate
 `CancellationHandle` capability containing weak ownership of the private native
 handle. Upgrading that weak reference pins the native session only for the
 duration of `cancel()`. Native cancellation and explicit end serialize inside
@@ -33,4 +36,5 @@ the private handle owner.
   busy state or general-purpose operation mutex.
 - Retaining a cancellation capability does not retain one of the 64 native
   session slots.
-- `Drop` and consuming `end(self)` share one exactly-once handle owner.
+- Explicit end marks the handle ended only after native success; destruction
+  makes one best-effort retry after an explicit failure.
