@@ -8,17 +8,21 @@ publication.
 
 ## Release pull-request automation
 
-The `Release-plz release PR` workflow is intentionally dormant until a
+The `Release-plz release PR` workflow uses the `release-plz` GitHub environment,
+which accepts deployments only from `main`. It is a successful no-op until a
 repository-only GitHub App is installed. Give the App only these repository
 permissions:
 
 - Contents: read and write.
 - Pull requests: read and write.
 
-Store its client ID as the `RELEASE_PLZ_APP_CLIENT_ID` Actions secret and its
-private key as `RELEASE_PLZ_APP_PRIVATE_KEY`. Then set the repository variable
-`RELEASE_PLZ_APP_CONFIGURED` to `true`. The App token is scoped again to this
-repository by the workflow. Do not substitute a broad personal access token.
+In Settings, Environments, `release-plz`, store its client ID as the
+`RELEASE_PLZ_APP_CLIENT_ID` environment secret and its private key as
+`RELEASE_PLZ_APP_PRIVATE_KEY`. The workflow activates automatically when both
+exist; no repository variable is required. With neither secret it is a
+successful no-op, while a partial credential pair is rejected as a
+configuration error. The App token is scoped again to this repository by the
+workflow. Do not substitute a broad personal access token.
 
 Release-plz updates `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md` on its release
 branch. It cannot publish, create or move a tag, or create a GitHub Release.

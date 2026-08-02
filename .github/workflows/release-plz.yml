@@ -20,19 +20,53 @@ jobs:
     name: Prepare a human-reviewed release PR
     if: >-
       github.repository == 'P4suta/restart-manager' &&
-      vars.RELEASE_PLZ_APP_CONFIGURED == 'true'
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment:
+      name: release-plz
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: credentials
+        name: Detect environment-scoped release App credentials
+        env:
+          APP_CLIENT_ID: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          configured=false
+          if [[ -z "$APP_CLIENT_ID" && -z "$APP_PRIVATE_KEY" ]]; then
+            configured=false
+          elif [[ -z "$APP_CLIENT_ID" || -z "$APP_PRIVATE_KEY" ]]; then
+            echo "::error::Configure both release-plz environment secrets as one credential pair."
+            exit 1
+          else
+            configured=true
+          fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+          if [[ "$configured" == "true" ]]; then
+            echo "Both release-plz GitHub App credentials are configured." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "No release PR was attempted."
+              echo
+              echo "Add both required secrets to the release-plz environment to activate this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - if: steps.credentials.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+      - if: steps.credentials.outputs.configured == 'true'
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: 1.97.1
       - id: app-token
+        if: steps.credentials.outputs.configured == 'true'
         name: Create a repository-scoped release App token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -43,6 +77,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
       - name: Create or update the release PR
+        if: steps.credentials.outputs.configured == 'true'
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
