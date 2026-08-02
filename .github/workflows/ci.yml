@@ -30,6 +30,9 @@ jobs:
           toolchain: 1.97.1
       - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - run: actionlint
+      - name: Test guarded Dependabot auto-merge policy
+        shell: bash
+        run: bash ./.github/scripts/test-dependabot-auto-merge-policy.sh
       - name: Test release metadata rejection cases
         shell: pwsh
         run: ./.github/scripts/test-release-metadata.ps1
@@ -195,8 +198,8 @@ jobs:
         run: |
           cargo public-api -sss --no-default-features > public-api.default.txt
           cargo public-api -sss --all-features > public-api.all.txt
-          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-${{ steps.package.outputs.package_version }}-default.txt" public-api.default.txt
-          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-${{ steps.package.outputs.package_version }}-all.txt" public-api.all.txt
+          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-default.txt" public-api.default.txt
+          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-all.txt" public-api.all.txt
 
   semver:
     name: Reject breaking API changes

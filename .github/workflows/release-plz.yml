@@ -1,0 +1,51 @@
+name: Release-plz release PR
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - Cargo.toml
+      - Cargo.lock
+      - CHANGELOG.md
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-pr:
+    name: Prepare a human-reviewed release PR
+    if: >-
+      github.repository == 'P4suta/restart-manager' &&
+      vars.RELEASE_PLZ_APP_CONFIGURED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - id: app-token
+        name: Create a repository-scoped release App token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: restart-manager
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Create or update the release PR
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
+        with:
+          command: release-pr
+          version: 0.3.160
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
