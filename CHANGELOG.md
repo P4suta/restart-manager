@@ -15,6 +15,11 @@ All notable changes are recorded here.
 - Release metadata, package-consumer, SBOM, provenance, and publication checks.
 - Guarded Dependabot auto-merge for verified compatible dependency updates.
 - Human-reviewed release-plz automation with environment-scoped App credentials.
+- Concrete Tokio worker commands without boxed jobs, plus
+  `tokio::AsyncOperationError<T>` for explicit optional-state recovery.
+- Allocation-free OS-string validation, single-pass safe-layer path
+  normalization, and malformed classification for invalid OS filter data.
+- Concrete example and xtask error enums without boxed error values.
 
 The release workflow requires a dated `## [0.1.0] - YYYY-MM-DD` heading on the
 commit that receives the annotated `v0.1.0` tag. The `Unreleased` heading is

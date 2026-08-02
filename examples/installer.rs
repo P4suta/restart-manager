@@ -1,16 +1,22 @@
 //! Complete blocking installer/update recipe.
 
 #[cfg(windows)]
-use std::error::Error;
-
-#[cfg(windows)]
 use restart_manager::{RestartSession, ShutdownOptions};
 
 #[cfg(windows)]
-type DynResult<T = ()> = Result<T, Box<dyn Error>>;
+#[derive(Debug, thiserror::Error)]
+enum InstallerError {
+    #[error("Restart Manager operation failed: {0}")]
+    RestartManager(#[from] restart_manager::Error),
+    #[error("file update failed: {0}")]
+    Update(#[from] std::io::Error),
+}
 
 #[cfg(windows)]
-fn main() -> DynResult {
+type InstallerResult<T = ()> = Result<T, InstallerError>;
+
+#[cfg(windows)]
+fn main() -> InstallerResult {
     let Some(file) = std::env::args_os().nth(1) else {
         eprintln!("usage: installer <file-to-update>");
         return Ok(());
@@ -58,7 +64,7 @@ fn main() -> DynResult {
 }
 
 #[cfg(windows)]
-fn replace_registered_file(_file: &std::ffi::OsStr) -> DynResult {
+fn replace_registered_file(_file: &std::ffi::OsStr) -> std::io::Result<()> {
     // Perform the installer's atomic file replacement or rollback here.
     Ok(())
 }

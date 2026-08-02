@@ -216,26 +216,22 @@ jobs:
         with:
           toolchain: 1.97.1
       - id: applicability
-        name: Detect the one-time unpublished version reset
+        name: Find the latest annotated release baseline
         shell: pwsh
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          $baselineManifest = git show "$($env:BASE_SHA):Cargo.toml"
-          $baseline = [regex]::Match(
-            ($baselineManifest -join [Environment]::NewLine),
-            '(?m)^version = "([^"]+)"$'
-          ).Groups[1].Value
-          $metadata = cargo metadata --no-deps --format-version 1 --locked |
-            ConvertFrom-Json -Depth 100
-          $current = ($metadata.packages |
-            Where-Object { $_.name -eq 'restart-manager' } |
-            Select-Object -First 1).version
-          $run = [version]$current -ge [version]$baseline
+          $releaseTag = git for-each-ref --sort=-version:refname `
+            '--format=%(refname:short)|%(objecttype)' refs/tags |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+\|tag$' } |
+            ForEach-Object { ($_ -split '\|', 2)[0] } |
+            Select-Object -First 1
+          $run = -not [string]::IsNullOrWhiteSpace($releaseTag)
           "run=$($run.ToString().ToLowerInvariant())" |
             Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          if (-not $run) {
-            "Skipping semver comparison for the intentional unpublished $baseline -> $current history reset." |
+          if ($run) {
+            "baseline=$releaseTag" |
+              Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            'Skipping semver comparison because no annotated release tag exists yet.' |
               Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
           }
       - if: steps.applicability.outputs.run == 'true'
@@ -245,7 +241,7 @@ jobs:
           cargo semver-checks
           --package restart-manager
           --all-features
-          --baseline-rev ${{ github.event.pull_request.base.sha }}
+          --baseline-rev ${{ steps.applicability.outputs.baseline }}
 
   package-consumer:
     name: Packaged default/all-feature consumer smoke

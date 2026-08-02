@@ -1,19 +1,25 @@
 //! Complete Tokio installer/update recipe.
 
 #[cfg(windows)]
-use std::error::Error;
-
-#[cfg(windows)]
 use restart_manager::ShutdownOptions;
 #[cfg(windows)]
 use restart_manager::tokio::{ProgressReceiver, RestartSession};
 
 #[cfg(windows)]
-type DynResult<T = ()> = Result<T, Box<dyn Error>>;
+#[derive(Debug, thiserror::Error)]
+enum InstallerError {
+    #[error("Restart Manager operation failed: {0}")]
+    RestartManager(#[from] restart_manager::Error),
+    #[error("file update failed: {0}")]
+    Update(#[from] std::io::Error),
+}
+
+#[cfg(windows)]
+type InstallerResult<T = ()> = Result<T, InstallerError>;
 
 #[cfg(windows)]
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> DynResult {
+async fn main() -> InstallerResult {
     let Some(file) = std::env::args_os().nth(1) else {
         eprintln!("usage: tokio_installer <file-to-update>");
         return Ok(());
@@ -34,12 +40,12 @@ async fn main() -> DynResult {
 
     let (shutdown, shutdown_progress) = session
         .shutdown_with_progress(ShutdownOptions::new().with_require_restart_registration(true));
-    let shutdown_reporter = tokio::spawn(report_progress("shutdown", shutdown_progress));
-    let pending = match shutdown.await {
+    let (shutdown_result, ()) =
+        tokio::join!(shutdown, report_progress("shutdown", shutdown_progress));
+    let pending = match shutdown_result {
         Ok(pending) => pending,
-        Err(not_started) => return Err(not_started.into_parts().1.into()),
+        Err(error) => return Err(error.into_parts().1.into()),
     };
-    shutdown_reporter.await?;
 
     // Retain this result: returning here would skip the explicit restart call.
     let update_result = if pending.shutdown_outcome().is_success() {
@@ -49,12 +55,11 @@ async fn main() -> DynResult {
     };
 
     let (restart, restart_progress) = pending.restart_with_progress();
-    let restart_reporter = tokio::spawn(report_progress("restart", restart_progress));
-    let completion = match restart.await {
+    let (restart_result, ()) = tokio::join!(restart, report_progress("restart", restart_progress));
+    let completion = match restart_result {
         Ok(completion) => completion,
-        Err(not_started) => return Err(not_started.into_parts().1.into()),
+        Err(error) => return Err(error.into_parts().1.into()),
     };
-    restart_reporter.await?;
 
     let outcome = completion.outcome().clone();
     let end_result = completion.end().await;
@@ -78,7 +83,7 @@ async fn report_progress(operation: &'static str, mut progress: ProgressReceiver
 }
 
 #[cfg(windows)]
-async fn replace_registered_file(_file: &std::ffi::OsStr) -> DynResult {
+async fn replace_registered_file(_file: &std::ffi::OsStr) -> std::io::Result<()> {
     // Perform the installer's async file replacement or rollback here.
     Ok(())
 }

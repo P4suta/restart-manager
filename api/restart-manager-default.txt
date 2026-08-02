@@ -210,7 +210,11 @@ impl<T> restart_manager::OperationNotStarted<T>
 pub const fn restart_manager::OperationNotStarted<T>::error(&self) -> &restart_manager::Error
 pub fn restart_manager::OperationNotStarted<T>::into_parts(self) -> (T, restart_manager::Error)
 pub const fn restart_manager::OperationNotStarted<T>::state(&self) -> &T
+impl<T> core::error::Error for restart_manager::OperationNotStarted<T>
+pub fn restart_manager::OperationNotStarted<T>::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl<T> core::fmt::Debug for restart_manager::OperationNotStarted<T>
+pub fn restart_manager::OperationNotStarted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::fmt::Display for restart_manager::OperationNotStarted<T>
 pub fn restart_manager::OperationNotStarted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct restart_manager::ParseSessionKeyError
 pub struct restart_manager::ProcessIdentity

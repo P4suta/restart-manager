@@ -4,6 +4,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::input::contains_nul;
 use crate::session::map_sys_error;
 use crate::{Error, ErrorKind, Result};
 
@@ -206,15 +207,14 @@ impl Drop for ApplicationRestartRegistration {
 }
 
 fn validate_arguments(arguments: &OsStr) -> Result<()> {
-    let units = utf16_units(arguments);
-    if units.contains(&0) {
+    if contains_nul(arguments) {
         return Err(Error::new(
             ErrorKind::InvalidInput,
             None,
             "application restart arguments may not contain an embedded NUL",
         ));
     }
-    if units.len() > MAX_RESTART_ARGUMENT_UNITS {
+    if utf16_unit_count(arguments) > MAX_RESTART_ARGUMENT_UNITS {
         return Err(Error::new(
             ErrorKind::InvalidInput,
             None,
@@ -225,14 +225,14 @@ fn validate_arguments(arguments: &OsStr) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn utf16_units(value: &OsStr) -> Vec<u16> {
+fn utf16_unit_count(value: &OsStr) -> usize {
     use std::os::windows::ffi::OsStrExt;
-    value.encode_wide().collect()
+    value.encode_wide().count()
 }
 
 #[cfg(not(windows))]
-fn utf16_units(value: &OsStr) -> Vec<u16> {
-    value.to_string_lossy().encode_utf16().collect()
+fn utf16_unit_count(value: &OsStr) -> usize {
+    value.to_string_lossy().encode_utf16().count()
 }
 
 #[cfg(test)]

@@ -1,10 +1,38 @@
 //! Repository automation for native Restart Manager scenarios.
 
-use std::error::Error;
+type XtaskResult<T = ()> = Result<T, XtaskError>;
 
-type DynResult<T = ()> = Result<T, Box<dyn Error>>;
+#[derive(Debug, thiserror::Error)]
+enum XtaskError {
+    #[error("{0}")]
+    Message(String),
+    #[cfg(not(windows))]
+    #[error("{0} requires Windows")]
+    Unsupported(&'static str),
+    #[error("unknown xtask command: {0}")]
+    UnknownCommand(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Time(#[from] std::time::SystemTimeError),
+    #[cfg(windows)]
+    #[error(transparent)]
+    RestartManager(#[from] restart_manager::Error),
+}
 
-fn main() -> DynResult {
+impl From<String> for XtaskError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<&str> for XtaskError {
+    fn from(message: &str) -> Self {
+        Self::Message(message.to_owned())
+    }
+}
+
+fn main() -> XtaskResult {
     let command = std::env::args().nth(1).unwrap_or_else(|| "help".to_owned());
     match command.as_str() {
         "e2e" => e2e(),
@@ -14,37 +42,37 @@ fn main() -> DynResult {
             println!("cargo xtask e2e    run the isolated Windows end-to-end scenario");
             Ok(())
         }
-        other => Err(format!("unknown xtask command: {other}").into()),
+        other => Err(XtaskError::UnknownCommand(other.to_owned())),
     }
 }
 
 #[cfg(not(windows))]
-fn e2e() -> DynResult {
-    Err("the Restart Manager E2E scenario requires Windows".into())
+fn e2e() -> XtaskResult {
+    Err(XtaskError::Unsupported("the Restart Manager E2E scenario"))
 }
 
 #[cfg(not(windows))]
-fn fixture() -> DynResult {
-    Err("the Restart Manager fixture requires Windows".into())
+fn fixture() -> XtaskResult {
+    Err(XtaskError::Unsupported("the Restart Manager fixture"))
 }
 
 #[cfg(not(windows))]
-fn fixture_restarted() -> DynResult {
-    Err("the Restart Manager fixture requires Windows".into())
+fn fixture_restarted() -> XtaskResult {
+    Err(XtaskError::Unsupported("the Restart Manager fixture"))
 }
 
 #[cfg(windows)]
-fn e2e() -> DynResult {
+fn e2e() -> XtaskResult {
     windows::e2e()
 }
 
 #[cfg(windows)]
-fn fixture() -> DynResult {
+fn fixture() -> XtaskResult {
     windows::fixture()
 }
 
 #[cfg(windows)]
-fn fixture_restarted() -> DynResult {
+fn fixture_restarted() -> XtaskResult {
     windows::fixture_restarted()
 }
 
@@ -71,11 +99,11 @@ mod windows {
         CREATE_NEW_CONSOLE, CREATE_NEW_PROCESS_GROUP, ExitProcess,
     };
 
-    use super::DynResult;
+    use super::XtaskResult;
 
     static IGNORE_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-    pub(super) fn e2e() -> DynResult {
+    pub(super) fn e2e() -> XtaskResult {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let directory = std::env::temp_dir().join(format!(
             "restart-manager-e2e-{}-{unique}",
@@ -119,7 +147,6 @@ mod windows {
         let target = FilterTarget::process(process);
         session.set_filter(&target, FilterAction::PreventShutdown)?;
         let pending = session.shutdown();
-        thread::sleep(Duration::from_millis(200));
         if cleanup.child_mut().try_wait()?.is_some() {
             return Err("PreventShutdown filter did not keep the fixture alive".into());
         }
@@ -173,7 +200,7 @@ mod windows {
         Ok(())
     }
 
-    pub(super) fn fixture() -> DynResult {
+    pub(super) fn fixture() -> XtaskResult {
         let mut arguments = std::env::args_os().skip(2);
         let lock_path = required_path(arguments.next(), "lock path")?;
         let ready_path = required_path(arguments.next(), "ready path")?;
@@ -205,7 +232,7 @@ mod windows {
         }
     }
 
-    pub(super) fn fixture_restarted() -> DynResult {
+    pub(super) fn fixture_restarted() -> XtaskResult {
         let marker = required_path(std::env::args_os().nth(2), "restart marker path")?;
         fs::write(marker, b"restarted")?;
         Ok(())
@@ -226,7 +253,7 @@ mod windows {
         0
     }
 
-    fn cancellation_e2e(executable: &Path) -> DynResult {
+    fn cancellation_e2e(executable: &Path) -> XtaskResult {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let directory = std::env::temp_dir().join(format!(
             "restart-manager-cancel-e2e-{}-{unique}",
@@ -304,13 +331,13 @@ mod windows {
         Ok(())
     }
 
-    fn required_path(value: Option<std::ffi::OsString>, name: &str) -> DynResult<PathBuf> {
+    fn required_path(value: Option<std::ffi::OsString>, name: &str) -> XtaskResult<PathBuf> {
         value
             .map(PathBuf::from)
             .ok_or_else(|| format!("fixture is missing {name}").into())
     }
 
-    fn wait_for_path(path: &Path, timeout: Duration) -> DynResult {
+    fn wait_for_path(path: &Path, timeout: Duration) -> XtaskResult {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             if path.exists() {
@@ -321,7 +348,7 @@ mod windows {
         Err(format!("timed out waiting for {}", path.display()).into())
     }
 
-    fn wait_for_exit(child: &mut Child, timeout: Duration) -> DynResult {
+    fn wait_for_exit(child: &mut Child, timeout: Duration) -> XtaskResult {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             if let Some(status) = child.try_wait()? {
@@ -337,7 +364,7 @@ mod windows {
         Err("timed out waiting for the fixture to release its file".into())
     }
 
-    fn assert_progress(operation: &str, values: &[u8]) -> DynResult {
+    fn assert_progress(operation: &str, values: &[u8]) -> XtaskResult {
         if values.is_empty() {
             return Err(format!("{operation} did not report progress").into());
         }
