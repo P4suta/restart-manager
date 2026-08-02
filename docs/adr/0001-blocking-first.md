@@ -12,10 +12,10 @@ need the Restart Manager.
 
 ## Decision
 
-The default API is blocking and depends on no async runtime. Version 1.0 also
-offers an optional Tokio facade whose dedicated worker design is recorded in
-ADR 0006. Other runtimes can move the Send blocking typestate into their own
-blocking facility.
+The default API is blocking and depends on no async runtime. The initial 0.1.0
+API also offers an optional Tokio facade whose dedicated worker design is
+recorded in ADR 0006. Other runtimes can move the Send blocking typestate into
+their own blocking facility.
 
 ## Consequences
 

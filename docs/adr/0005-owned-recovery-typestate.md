@@ -1,6 +1,6 @@
 # ADR 0005: Owned recovery typestate
 
-Status: accepted for 1.0.
+Status: accepted for the initial 0.1.0 release.
 
 Restart Manager requires installers to call `RmRestart` even after
 `RmShutdown` reports partial failure. A reusable mutable session makes an

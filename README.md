@@ -1,21 +1,28 @@
 # restart-manager
 
+[![CI](https://github.com/P4suta/restart-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/P4suta/restart-manager/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/P4suta/restart-manager/actions/workflows/codeql.yml/badge.svg)](https://github.com/P4suta/restart-manager/actions/workflows/codeql.yml)
+
 Safe Restart Manager workflows for Rust.
 
-Version 1.0 turns the Windows Restart Manager API into an owned recovery
-protocol: once shutdown is attempted, the only normal choices are restart or
-an explicit decision to leave applications stopped.
+The crate is designed for Rust developers building Windows installers and
+updaters. Its initial, not-yet-published 0.1.0 API turns the Windows Restart
+Manager API into an owned recovery protocol: once shutdown is attempted, the
+only normal choices are restart or an explicit decision to leave applications
+stopped.
 
 ## Core workflow
 
 ```rust,no_run
-use restart_manager::{OperationOutcome, RestartSession, ShutdownOptions};
+use restart_manager::{RestartSession, ShutdownOptions};
 
-fn update_file() -> Result<(), restart_manager::Error> {
+fn update_file() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = RestartSession::new()?;
     session.register_files([r"C:\product\component.dll"])?;
 
-    for application in &session.affected_applications()? {
+    let report = session.affected_applications()?;
+    eprintln!("reboot reasons: {:?}", report.reboot_reasons());
+    for application in &report {
         eprintln!(
             "{} (restartable: {})",
             application.display_name().to_string_lossy(),
@@ -27,19 +34,24 @@ fn update_file() -> Result<(), restart_manager::Error> {
         ShutdownOptions::new().with_require_restart_registration(true),
     );
 
-    if let OperationOutcome::Failed(error) = pending.shutdown_outcome() {
-        let error = error.clone();
-        pending.restart().end()?;
-        return Err(error);
-    }
-
-    // Replace the registered files here.
+    // Retain update errors so restart is still attempted.
+    let update_result: Result<(), Box<dyn std::error::Error>> =
+        if pending.shutdown_outcome().is_success() {
+            // Replace the registered files here.
+            Ok(())
+        } else {
+            Ok(())
+        };
 
     let completion = pending.restart();
-    if let Some(restart) = completion.outcome().restart_outcome() {
-        restart.clone().into_result()?;
-    }
-    completion.end()?;
+    let outcome = completion.outcome().clone();
+    let end_result = completion.end();
+
+    // All work has been attempted before any retained error is returned.
+    outcome.shutdown_outcome().clone().into_result()?;
+    update_result?;
+    outcome.restart_outcome().unwrap().clone().into_result()?;
+    end_result?;
     Ok(())
 }
 ```
@@ -54,6 +66,13 @@ then ends the session. This protects early `?`, panics, and partially
 successful shutdown. `leave_stopped` is the only explicit opt-out.
 `mem::forget`, process abort, and `process::exit` do not run destructors and
 are outside this guarantee.
+
+The compile-checked [blocking installer example](examples/installer.rs) shows
+affected applications and reboot reasons, update gating, restart after every
+shutdown attempt and update failure, both retained outcomes, and explicit
+session end. This ordering follows Microsoft's
+[primary-installer workflow](https://learn.microsoft.com/en-us/windows/win32/rstmgr/using-restart-manager-with-a-primary-installer)
+and [RmRestart requirement](https://learn.microsoft.com/en-us/windows/win32/api/restartmanager/nf-restartmanager-rmrestart).
 
 ## Resources and reports
 
@@ -168,10 +187,18 @@ owns the blocking typestate and processes commands in FIFO order. Tokio
 coalescing progress through `ProgressReceiver`; user callbacks never run on
 the worker.
 
+`ProgressReceiver::peek` observes without consuming. `recv` waits for a new
+coalesced sample and returns `None` when the operation ends normally. Worker
+failure is reported by the paired shutdown or restart future as
+`ErrorKind::AsyncWorkerUnavailable`, not by the progress stream. See the
+compile-checked [Tokio installer example](examples/tokio_installer.rs).
+
 Dropping a shutdown future requests best-effort cancellation, after which the
 worker recovers partially stopped applications and ends. Dropping a restart
-future detaches it so restart finishes before cleanup. Other runtimes can move
-the `Send` blocking typestate into their own blocking facility.
+future detaches it so restart finishes before cleanup. Blocking session
+typestates are `Send`, `CancellationHandle` is `Send + Sync`, and every
+public Tokio future is `Send`. Other runtimes can move the blocking typestate
+into their own blocking facility.
 
 ## Platform behavior
 
@@ -192,12 +219,12 @@ and async-worker failures. `raw_os_error` preserves Win32 codes and
 - Restart applies only to services and applications registered for restart.
 - Windows user, privilege, and Terminal Services boundaries still apply.
 - Forced fallback, process killing, file replacement, rollback, SCM fallback,
-  WER recovery callbacks, serde, tracing, and a generic workflow DSL are not
-  part of 1.0.
+  WER recovery callbacks, serde, tracing, a generic workflow DSL, and an
+  official CLI are not part of 0.1.0.
 
 ## Compatibility and checks
 
-- Version: 1.0.0
+- Version: 0.1.0 (not yet published)
 - Edition: Rust 2024
 - MSRV: Rust 1.88
 - Default runtime model: blocking
@@ -214,8 +241,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --locked --no-de
 cargo package --locked
 ```
 
-See [MIGRATION.md](MIGRATION.md), [CHANGELOG.md](CHANGELOG.md), and
-[docs/adr](docs/adr) for the compatibility and design record.
+See [CHANGELOG.md](CHANGELOG.md) and [docs/adr](docs/adr) for the release and
+design record.
 
 ## License
 

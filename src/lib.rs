@@ -18,9 +18,19 @@
 //!     println!("locked by: {:?}", application.display_name());
 //! }
 //! let pending = session.shutdown_with_options(ShutdownOptions::default());
-//! // Replace or update the registered files here.
+//! let can_update = pending.shutdown_outcome().is_success();
+//! if can_update {
+//!     // Replace or update the registered files here.
+//! }
 //! let completion = pending.restart();
+//! let outcome = completion.outcome().clone();
 //! completion.end()?;
+//! outcome.shutdown_outcome().clone().into_result()?;
+//! outcome
+//!     .restart_outcome()
+//!     .expect("restart was attempted")
+//!     .clone()
+//!     .into_result()?;
 //! # Ok(())
 //! # }
 //! # #[cfg(not(windows))]

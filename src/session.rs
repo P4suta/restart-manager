@@ -155,7 +155,7 @@ impl SessionCore {
 /// A primary-installer Restart Manager session.
 ///
 /// Shutdown consumes this value and produces a [RestartPending], so restart
-/// cannot be called out of sequence.
+/// cannot be called out of sequence. This typestate is [`Send`].
 pub struct RestartSession {
     core: SessionCore,
 }
@@ -322,7 +322,8 @@ impl RestartSession {
 /// The state entered after any shutdown attempt.
 ///
 /// Dropping an armed value makes one best-effort restart attempt and then ends
-/// the session. This covers early returns, panics, and partial shutdown.
+/// the session. This covers early returns, panics, and partial shutdown. This
+/// typestate is [`Send`].
 #[must_use = "dropping this value attempts recovery; call restart or leave_stopped explicitly"]
 pub struct RestartPending {
     core: Option<SessionCore>,
@@ -447,6 +448,7 @@ impl Drop for RestartPending {
 }
 
 /// Completed recovery state with retained results and post-operation reporting.
+/// This typestate is [`Send`].
 pub struct RecoveryCompletion {
     core: SessionCore,
     outcome: RecoveryOutcome,
@@ -516,7 +518,8 @@ impl<T> fmt::Debug for OperationNotStarted<T> {
 
 /// A secondary-installer view of an existing session.
 ///
-/// This role can only register resources, inspect its key, and end.
+/// This role can only register resources, inspect its key, and end. This
+/// typestate is [`Send`].
 pub struct JoinedSession {
     core: SessionCore,
 }
@@ -583,7 +586,8 @@ impl JoinedSession {
     }
 }
 
-/// A weak capability that can cancel a blocking native operation.
+/// A weak, [`Send`] + [`Sync`] capability that can cancel a blocking native
+/// operation.
 #[derive(Clone)]
 pub struct CancellationHandle {
     handle: Weak<SessionHandle>,

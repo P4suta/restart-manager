@@ -1,24 +1,28 @@
-# 1.x release runbook
+# Initial 0.1.0 release runbook
 
-The repository, crates.io package, initial push, and first publication are
-manual bootstrap steps and are not performed by automation in this repository.
+Version 0.1.0 has not been published. The initial GitHub push, tag creation,
+and crates.io publication remain deliberate operator actions; automation in
+this repository does not perform them without an explicit publish request.
 
 Before tagging:
 
-1. Confirm `Cargo.toml`, `Cargo.lock`, the top CHANGELOG entry, and the tag
-   all contain the same version.
-2. Run every locked command from CONTRIBUTING, native E2E, coverage, default
-   and all-feature API snapshots, and semver checks.
-3. Run `cargo package --locked`, inspect the allowlist, unpack the crate, and
+1. Confirm `Cargo.toml` and `Cargo.lock` both describe 0.1.0.
+2. Replace `## [Unreleased]` in the CHANGELOG with
+   `## [0.1.0] - YYYY-MM-DD` and review the complete first-release notes.
+3. Run every locked command from CONTRIBUTING, native E2E, coverage, default
+   and all-feature API snapshots, semver review, and actionlint.
+4. Run `cargo package --locked`, inspect the allowlist, unpack the crate, and
    compile a clean default/all-feature consumer.
-4. Review the generated SBOM and provenance inputs.
-5. Create an annotated `vMAJOR.MINOR.PATCH` tag only after the commit is on
-   protected `main`.
+5. Review the generated SBOM and provenance inputs.
+6. Create the annotated `v0.1.0` tag only after the commit is on protected
+   `main`.
 
-The release workflow is deliberately dormant unless its publish input is
-enabled and the protected `crates-io` environment approves it.
+The release workflow derives the crate name, version, archive name, source
+directory, and artifact name from Cargo metadata. A publish request is rejected
+unless it runs from the matching annotated tag and the CHANGELOG has the dated
+version heading. The protected `crates-io` environment must also approve it.
 
 For the first crates.io release, use a scoped token to bootstrap package
 ownership. After ownership exists, configure the repository/environment as a
 Trusted Publisher, remove the token secret, and enable the trusted-publishing
-job. Keep the manual token job disabled after that transition.
+path. Keep token publishing disabled after that transition.

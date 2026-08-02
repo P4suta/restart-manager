@@ -1,6 +1,6 @@
 [package]
 name = "restart-manager"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -18,7 +18,6 @@ include = [
     "/docs/release.md",
     "/README.md",
     "/CHANGELOG.md",
-    "/MIGRATION.md",
     "/SECURITY.md",
     "/CONTRIBUTING.md",
     "/LICENSE-APACHE",
@@ -51,3 +50,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_RestartManager",
     "Win32_System_Threading",
 ] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[[example]]
+name = "tokio_installer"
+required-features = ["tokio"]

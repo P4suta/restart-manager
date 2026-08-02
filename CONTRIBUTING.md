@@ -21,5 +21,5 @@ temporary files. Never point a shutdown test at an editor, shell, build tool,
 or unrelated user process.
 
 Public API changes require updated default/all-feature snapshots, semver review,
-CHANGELOG and migration notes, and a design record when lifecycle or unsafe
-invariants change.
+CHANGELOG notes, and a design record when lifecycle or unsafe invariants
+change.

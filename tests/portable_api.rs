@@ -1,8 +1,29 @@
 use std::str::FromStr;
 
 use restart_manager::{
-    ApplicationRestartOptions, FilterTarget, ProcessIdentity, ResourceBatch, SessionKey,
+    ApplicationRestartOptions, CancellationHandle, FilterTarget, JoinedSession, ProcessIdentity,
+    RecoveryCompletion, ResourceBatch, RestartPending, RestartSession, SessionKey,
 };
+
+fn assert_send<T: Send>() {}
+
+fn assert_send_sync<T: Send + Sync>() {}
+
+#[test]
+fn thread_safety_contracts_are_part_of_the_public_api() {
+    assert_send::<RestartSession>();
+    assert_send::<JoinedSession>();
+    assert_send::<RestartPending>();
+    assert_send::<RecoveryCompletion>();
+    assert_send_sync::<CancellationHandle>();
+
+    #[cfg(feature = "tokio")]
+    {
+        assert_send::<restart_manager::tokio::ShutdownFuture>();
+        assert_send::<restart_manager::tokio::RestartFuture>();
+        assert_send::<restart_manager::tokio::RestartWithProgressFuture>();
+    }
+}
 
 #[test]
 fn pure_domain_validation_is_portable() {

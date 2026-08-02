@@ -11,8 +11,8 @@ pub async fn restart_manager::tokio::JoinedSession::register_services<I, S>(&mut
 pub fn restart_manager::tokio::JoinedSession::session_key(&self) -> &restart_manager::SessionKey
 pub struct restart_manager::tokio::ProgressReceiver
 impl restart_manager::tokio::ProgressReceiver
-pub async fn restart_manager::tokio::ProgressReceiver::changed(&mut self) -> restart_manager::Result<restart_manager::Progress>
-pub fn restart_manager::tokio::ProgressReceiver::latest(&self) -> core::option::Option<restart_manager::Progress>
+pub fn restart_manager::tokio::ProgressReceiver::peek(&self) -> core::option::Option<restart_manager::Progress>
+pub async fn restart_manager::tokio::ProgressReceiver::recv(&mut self) -> core::option::Option<restart_manager::Progress>
 pub struct restart_manager::tokio::RecoveryCompletion
 impl restart_manager::tokio::RecoveryCompletion
 pub async fn restart_manager::tokio::RecoveryCompletion::affected_applications(&mut self) -> restart_manager::Result<restart_manager::AffectedApplications>

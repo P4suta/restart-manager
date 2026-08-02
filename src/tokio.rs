@@ -4,6 +4,8 @@
 //! typestate always remains on its worker, including when an awaiting future is
 //! dropped. Progress uses a Tokio watch channel and therefore coalesces samples
 //! when a receiver is slower than Windows.
+//!
+//! Every public future returned by this module is [`Send`].
 
 use std::borrow::Borrow;
 use std::ffi::OsStr;
@@ -149,19 +151,16 @@ pub struct ProgressReceiver {
 }
 
 impl ProgressReceiver {
-    /// Returns the most recently observed progress value.
+    /// Peeks at the latest progress value without marking it as received.
     #[must_use]
-    pub fn latest(&self) -> Option<Progress> {
+    pub fn peek(&self) -> Option<Progress> {
         *self.receiver.borrow()
     }
 
-    /// Waits until a newer progress value is available.
-    pub async fn changed(&mut self) -> Result<Progress> {
-        self.receiver
-            .changed()
-            .await
-            .map_err(|_| worker_unavailable())?;
-        self.latest().ok_or_else(worker_unavailable)
+    /// Receives a newer progress value, or `None` after normal operation end.
+    pub async fn recv(&mut self) -> Option<Progress> {
+        self.receiver.changed().await.ok()?;
+        self.peek()
     }
 }
 
@@ -814,27 +813,67 @@ mod tests {
     }
 
     #[test]
-    fn progress_receiver_coalesces_to_the_latest_sample() {
+    fn progress_receiver_coalesces_and_peek_does_not_consume() {
         let (sender, receiver) = watch::channel(None);
-        let receiver = ProgressReceiver { receiver };
+        let mut receiver = ProgressReceiver { receiver };
         sender.send_replace(Progress::try_from_native(10));
         sender.send_replace(Progress::try_from_native(20));
-        assert_eq!(receiver.latest().unwrap().percent_complete(), 20);
+        assert_eq!(receiver.peek().unwrap().percent_complete(), 20);
+        assert_eq!(receiver.peek().unwrap().percent_complete(), 20);
+        assert_eq!(block_on(receiver.recv()).unwrap().percent_complete(), 20);
     }
 
     #[test]
-    fn progress_receiver_changed_wakes_without_running_user_code_on_worker() {
+    fn progress_receiver_recv_wakes_and_closes_normally() {
         let (sender, receiver) = watch::channel(None);
         let mut receiver = ProgressReceiver { receiver };
         let producer = std::thread::spawn(move || {
             sender.send_replace(Progress::try_from_native(30));
         });
-        assert_eq!(block_on(receiver.changed()).unwrap().percent_complete(), 30);
+        assert_eq!(block_on(receiver.recv()).unwrap().percent_complete(), 30);
         producer.join().unwrap();
-        assert_eq!(
-            block_on(receiver.changed()).unwrap_err().kind(),
-            ErrorKind::AsyncWorkerUnavailable
-        );
+        assert_eq!(block_on(receiver.recv()), None);
+    }
+
+    #[test]
+    fn worker_failure_remains_on_the_operation_future() {
+        let session = crate::RestartSession::new().unwrap();
+        let key = session.session_key().clone();
+        let cancellation = session.cancellation_handle();
+        session.end().unwrap();
+
+        let (job_sender, job_receiver) = mpsc::channel();
+        drop(job_receiver);
+        let worker = Worker { sender: job_sender };
+        let (reply_sender, receiver) = oneshot::channel();
+        drop(reply_sender);
+        let future = ShutdownFuture {
+            worker: Some(worker),
+            key,
+            cancellation,
+            receiver,
+            cancel_on_drop: true,
+        };
+        let error = match block_on(future) {
+            Ok(_) => panic!("a disconnected shutdown reply unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(error.error().kind(), ErrorKind::AsyncWorkerUnavailable);
+
+        let (job_sender, job_receiver) = mpsc::channel();
+        drop(job_receiver);
+        let worker = Worker { sender: job_sender };
+        let (reply_sender, receiver) = oneshot::channel();
+        drop(reply_sender);
+        let result = block_on(RestartFuture {
+            worker: Some(worker),
+            receiver,
+        });
+        let error = match result {
+            Ok(_) => panic!("a disconnected restart reply unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), ErrorKind::AsyncWorkerUnavailable);
     }
 
     #[test]
@@ -899,10 +938,10 @@ mod tests {
         .unwrap();
         let (shutdown, progress) = session.shutdown_with_progress(ShutdownOptions::default());
         let pending = block_on(shutdown).unwrap();
-        assert!(progress.latest().is_some());
+        assert!(progress.peek().is_some());
         let (restart, progress) = pending.restart_with_progress();
         let mut completion = block_on(restart).unwrap();
-        let _ = progress.latest();
+        let _ = progress.peek();
         block_on(completion.affected_applications()).unwrap();
         block_on(completion.end()).unwrap();
 

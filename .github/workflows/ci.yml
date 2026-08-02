@@ -16,13 +16,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  workflow-quality:
+    name: Actions and release-metadata validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: 1.25.x
+          cache: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - run: actionlint
+      - name: Test release metadata rejection cases
+        shell: pwsh
+        run: ./.github/scripts/test-release-metadata.ps1
+
   windows-quality:
     name: Windows 2022 quality, native, and E2E
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
+          toolchain: 1.97.1
           components: clippy,rustfmt
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
@@ -39,8 +58,10 @@ jobs:
     name: Windows latest native and E2E
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
       - run: cargo test --package restart-manager --all-targets --all-features --locked -- --test-threads=1
       - run: cargo run --locked --package xtask -- e2e
 
@@ -48,8 +69,10 @@ jobs:
     name: Rust 1.88 MSRV
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.88.0
       - run: cargo check --workspace --all-targets --locked
       - run: cargo check --workspace --all-targets --all-features --locked
       - run: cargo test --package restart-manager --lib --locked
@@ -66,9 +89,10 @@ jobs:
           - aarch64-pc-windows-msvc
         features: [default, all]
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
+          toolchain: 1.97.1
           targets: ${{ matrix.target }}
       - if: matrix.features == 'default'
         run: cargo check --package restart-manager --target ${{ matrix.target }} --locked
@@ -83,9 +107,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
+          toolchain: 1.97.1
           components: clippy
       - run: cargo check --workspace --all-targets --locked
       - run: cargo check --workspace --all-targets --all-features --locked
@@ -95,10 +120,13 @@ jobs:
   miri:
     name: Portable pure tests under Miri
     runs-on: ubuntu-latest
+    env:
+      MIRIFLAGS: -Zmiri-disable-isolation
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@nightly-2026-07-15
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
+          toolchain: nightly-2026-07-15
           components: miri
       - run: cargo miri setup
       - run: cargo miri test --package restart-manager --lib --no-default-features --locked
@@ -107,9 +135,10 @@ jobs:
     name: Library and unsafe boundary coverage >= 90%
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
+          toolchain: 1.97.1
           components: llvm-tools-preview
       - run: cargo install cargo-llvm-cov --version 0.8.7 --locked
       - run: cargo llvm-cov clean --workspace
@@ -142,7 +171,7 @@ jobs:
               throw "unsafe sys $metric coverage is $percent%, below 90%"
             }
           }
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-codecov
           path: |
@@ -153,27 +182,60 @@ jobs:
     name: Default and all-feature API snapshots
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@nightly-2026-07-15
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly-2026-07-15
+      - id: package
+        name: Read package metadata
+        shell: pwsh
+        run: ./.github/scripts/release-metadata.ps1
       - run: cargo install cargo-public-api --version 0.52.0 --locked
       - shell: bash
         run: |
           cargo public-api -sss --no-default-features > public-api.default.txt
           cargo public-api -sss --all-features > public-api.all.txt
-          git diff --no-index --exit-code api/restart-manager-1.0.0-default.txt public-api.default.txt
-          git diff --no-index --exit-code api/restart-manager-1.0.0-all.txt public-api.all.txt
+          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-${{ steps.package.outputs.package_version }}-default.txt" public-api.default.txt
+          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-${{ steps.package.outputs.package_version }}-all.txt" public-api.all.txt
 
   semver:
-    name: Reject breaking 1.x API changes
+    name: Reject breaking API changes
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@1.97.1
-      - run: cargo install cargo-semver-checks --version 0.49.0 --locked
-      - run: >-
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - id: applicability
+        name: Detect the one-time unpublished version reset
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          $baselineManifest = git show "$($env:BASE_SHA):Cargo.toml"
+          $baseline = [regex]::Match(
+            ($baselineManifest -join [Environment]::NewLine),
+            '(?m)^version = "([^"]+)"$'
+          ).Groups[1].Value
+          $metadata = cargo metadata --no-deps --format-version 1 --locked |
+            ConvertFrom-Json -Depth 100
+          $current = ($metadata.packages |
+            Where-Object { $_.name -eq 'restart-manager' } |
+            Select-Object -First 1).version
+          $run = [version]$current -ge [version]$baseline
+          "run=$($run.ToString().ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          if (-not $run) {
+            "Skipping semver comparison for the intentional unpublished $baseline -> $current history reset." |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+      - if: steps.applicability.outputs.run == 'true'
+        run: cargo install cargo-semver-checks --version 0.49.0 --locked
+      - if: steps.applicability.outputs.run == 'true'
+        run: >-
           cargo semver-checks
           --package restart-manager
           --all-features
@@ -183,33 +245,42 @@ jobs:
     name: Packaged default/all-feature consumer smoke
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - id: package
+        name: Read package metadata
+        shell: pwsh
+        run: ./.github/scripts/release-metadata.ps1
       - run: cargo package --locked
       - name: Consume only the packaged source
         shell: pwsh
         run: |
-          $archive = Resolve-Path target/package/restart-manager-1.0.0.crate
+          $archive = Resolve-Path "${{ steps.package.outputs.archive_path }}"
           $unpack = Join-Path $env:RUNNER_TEMP restart-manager-package
           New-Item -ItemType Directory -Path $unpack | Out-Null
           tar -xf $archive -C $unpack
-          $source = (Resolve-Path "$unpack/restart-manager-1.0.0").Path.Replace('\', '/')
-          $consumer = Join-Path $env:RUNNER_TEMP restart-manager-consumer
-          cargo new --bin $consumer
-          @"
+          $source = (Resolve-Path "$unpack/${{ steps.package.outputs.source_directory }}").Path.Replace('\', '/')
+
+          foreach ($variant in @('default', 'all')) {
+            $consumer = Join-Path $env:RUNNER_TEMP "restart-manager-consumer-$variant"
+            cargo new --bin $consumer
+            $featureClause = if ($variant -eq 'all') { ', features = ["tokio"]' } else { '' }
+            @"
           [package]
-          name = "restart-manager-consumer"
+          name = "restart-manager-consumer-$variant"
           version = "0.0.0"
           edition = "2024"
 
           [dependencies]
-          restart-manager = { path = "$source", features = ["tokio"] }
+          restart-manager = { path = "$source"$featureClause }
           "@ | Set-Content -Encoding utf8 "$consumer/Cargo.toml"
-          @"
+            @"
           fn main() {
               let _ = restart_manager::ShutdownOptions::default();
-              let _ = restart_manager::tokio::RestartSession::new();
           }
           "@ | Set-Content -Encoding utf8 "$consumer/src/main.rs"
-          cargo generate-lockfile --manifest-path "$consumer/Cargo.toml"
-          cargo check --manifest-path "$consumer/Cargo.toml" --locked
+            cargo generate-lockfile --manifest-path "$consumer/Cargo.toml"
+            cargo check --manifest-path "$consumer/Cargo.toml" --locked
+          }

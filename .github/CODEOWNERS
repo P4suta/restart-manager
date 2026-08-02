@@ -1,0 +1,7 @@
+# Default ownership for review routing.
+* @P4suta
+
+# Security-sensitive automation and unsafe Windows boundary.
+/.github/ @P4suta
+/src/sys.rs @P4suta
+/docs/adr/ @P4suta

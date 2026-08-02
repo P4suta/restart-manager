@@ -1,6 +1,8 @@
 # Security policy
 
-Security fixes are provided for the latest 1.x release.
+Until 0.1.0 is published, security fixes are provided on the unreleased
+`main` branch. After publication, fixes are provided for the latest release
+line.
 
 Please report vulnerabilities privately through the repository's GitHub
 Security Advisory form. Do not open a public issue containing exploit details,
