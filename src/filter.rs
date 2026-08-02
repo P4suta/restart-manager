@@ -3,7 +3,10 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
-use crate::{Error, ErrorKind, ProcessIdentity, Result};
+use crate::input::{
+    absolute_user_path, validate_absolute_os_path, validate_os_output, validate_user_os_value,
+};
+use crate::{ProcessIdentity, Result};
 
 /// The executable, process, or service selected by a filter.
 ///
@@ -25,15 +28,7 @@ enum TargetKind {
 impl FilterTarget {
     /// Creates a validated executable-path target.
     pub fn executable(path: impl Into<PathBuf>) -> Result<Self> {
-        let path = path.into();
-        validate_os_value(path.as_os_str(), "an executable path")?;
-        let path = std::path::absolute(path).map_err(|error| {
-            Error::new(
-                ErrorKind::InvalidInput,
-                error.raw_os_error().map(|code| code as u32),
-                "the executable path could not be made absolute",
-            )
-        })?;
+        let path = absolute_user_path(path.into(), "an executable path")?;
         Ok(Self {
             kind: TargetKind::Executable(path),
         })
@@ -50,7 +45,7 @@ impl FilterTarget {
     /// Creates a validated service-short-name target.
     pub fn service(name: impl Into<OsString>) -> Result<Self> {
         let name = name.into();
-        validate_os_value(&name, "a service short name")?;
+        validate_user_os_value(&name, "a service short name")?;
         Ok(Self {
             kind: TargetKind::Service(name),
         })
@@ -84,7 +79,7 @@ impl FilterTarget {
     }
 
     pub(crate) fn from_raw_executable(path: PathBuf) -> Result<Self> {
-        validate_os_value(path.as_os_str(), "an executable path")?;
+        validate_absolute_os_path(&path, "executable filter path")?;
         Ok(Self {
             kind: TargetKind::Executable(path),
         })
@@ -95,29 +90,11 @@ impl FilterTarget {
     }
 
     pub(crate) fn from_raw_service(name: OsString) -> Result<Self> {
-        validate_os_value(&name, "a service short name")?;
+        validate_os_output(&name, "service filter name")?;
         Ok(Self {
             kind: TargetKind::Service(name),
         })
     }
-}
-
-fn validate_os_value(value: &OsStr, description: &'static str) -> Result<()> {
-    if value.is_empty() {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            None,
-            format!("{description} may not be empty"),
-        ));
-    }
-    if value.to_string_lossy().contains('\0') {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            None,
-            format!("{description} may not contain an embedded NUL"),
-        ));
-    }
-    Ok(())
 }
 
 /// The official `RM_FILTER_ACTION` behavior.

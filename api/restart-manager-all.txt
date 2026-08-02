@@ -1,5 +1,16 @@
 pub mod restart_manager
 pub mod restart_manager::tokio
+pub struct restart_manager::tokio::AsyncOperationError<T>
+impl<T> restart_manager::tokio::AsyncOperationError<T>
+pub const fn restart_manager::tokio::AsyncOperationError<T>::error(&self) -> &restart_manager::Error
+pub fn restart_manager::tokio::AsyncOperationError<T>::into_parts(self) -> (core::option::Option<T>, restart_manager::Error)
+pub const fn restart_manager::tokio::AsyncOperationError<T>::state(&self) -> core::option::Option<&T>
+impl<T> core::error::Error for restart_manager::tokio::AsyncOperationError<T>
+pub fn restart_manager::tokio::AsyncOperationError<T>::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl<T> core::fmt::Debug for restart_manager::tokio::AsyncOperationError<T>
+pub fn restart_manager::tokio::AsyncOperationError<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::fmt::Display for restart_manager::tokio::AsyncOperationError<T>
+pub fn restart_manager::tokio::AsyncOperationError<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct restart_manager::tokio::JoinedSession
 impl restart_manager::tokio::JoinedSession
 pub async fn restart_manager::tokio::JoinedSession::end(self) -> restart_manager::Result<()>
@@ -47,11 +58,11 @@ pub fn restart_manager::tokio::RestartSession::shutdown_with_options(self, resta
 pub fn restart_manager::tokio::RestartSession::shutdown_with_progress(self, restart_manager::ShutdownOptions) -> (restart_manager::tokio::ShutdownFuture, restart_manager::tokio::ProgressReceiver)
 pub struct restart_manager::tokio::RestartWithProgressFuture
 impl core::future::future::Future for restart_manager::tokio::RestartWithProgressFuture
-pub type restart_manager::tokio::RestartWithProgressFuture::Output = core::result::Result<restart_manager::tokio::RecoveryCompletion, restart_manager::OperationNotStarted<restart_manager::tokio::RestartPending>>
+pub type restart_manager::tokio::RestartWithProgressFuture::Output = core::result::Result<restart_manager::tokio::RecoveryCompletion, restart_manager::tokio::AsyncOperationError<restart_manager::tokio::RestartPending>>
 pub fn restart_manager::tokio::RestartWithProgressFuture::poll(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<Self::Output>
 pub struct restart_manager::tokio::ShutdownFuture
 impl core::future::future::Future for restart_manager::tokio::ShutdownFuture
-pub type restart_manager::tokio::ShutdownFuture::Output = core::result::Result<restart_manager::tokio::RestartPending, restart_manager::OperationNotStarted<restart_manager::tokio::RestartSession>>
+pub type restart_manager::tokio::ShutdownFuture::Output = core::result::Result<restart_manager::tokio::RestartPending, restart_manager::tokio::AsyncOperationError<restart_manager::tokio::RestartSession>>
 pub fn restart_manager::tokio::ShutdownFuture::poll(core::pin::Pin<&mut Self>, &mut core::task::wake::Context<'_>) -> core::task::poll::Poll<Self::Output>
 impl core::ops::drop::Drop for restart_manager::tokio::ShutdownFuture
 pub fn restart_manager::tokio::ShutdownFuture::drop(&mut self)
@@ -266,7 +277,11 @@ impl<T> restart_manager::OperationNotStarted<T>
 pub const fn restart_manager::OperationNotStarted<T>::error(&self) -> &restart_manager::Error
 pub fn restart_manager::OperationNotStarted<T>::into_parts(self) -> (T, restart_manager::Error)
 pub const fn restart_manager::OperationNotStarted<T>::state(&self) -> &T
+impl<T> core::error::Error for restart_manager::OperationNotStarted<T>
+pub fn restart_manager::OperationNotStarted<T>::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl<T> core::fmt::Debug for restart_manager::OperationNotStarted<T>
+pub fn restart_manager::OperationNotStarted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T> core::fmt::Display for restart_manager::OperationNotStarted<T>
 pub fn restart_manager::OperationNotStarted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct restart_manager::ParseSessionKeyError
 pub struct restart_manager::ProcessIdentity

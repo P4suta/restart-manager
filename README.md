@@ -53,6 +53,10 @@ fn main() -> Result<(), restart_manager::Error> {
 - Forced shutdown is opt-in and can cause applications to lose data.
 - Restart Manager can relaunch only services and applications that registered
   themselves for restart.
+- Tokio shutdown/restart futures use `tokio::AsyncOperationError<T>`. Its
+  `state()` is `Some` only when a callback-lease conflict proves that native
+  work never began; worker failures return `None` rather than a misleading
+  retryable typestate.
 
 ## More information
 

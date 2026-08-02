@@ -2,14 +2,78 @@
 
 #![allow(unsafe_code)]
 
+use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
+
+pub(crate) type SysResult<T> = std::result::Result<T, SysError>;
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SysError {
+    #[cfg_attr(windows, allow(dead_code))]
+    UnsupportedPlatform,
+    Os(u32),
+    HResult(i32),
+    InvalidInput(&'static str),
+    CountOverflow,
+    AllocationFailure,
+    CallbackInUse,
+    DataChanged(u32),
+    MalformedOutput(&'static str),
+    SessionEnded,
+}
+
+impl SysError {
+    pub(crate) const fn raw_os_error(self) -> Option<u32> {
+        match self {
+            Self::Os(code) => Some(code),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RawUniqueProcess {
+    pub(crate) pid: u32,
+    pub(crate) start_time: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct RawApplication {
+    pub(crate) display_name: OsString,
+    pub(crate) service_name: OsString,
+    pub(crate) application_type: i32,
+    pub(crate) status: u32,
+    pub(crate) restartable: bool,
+    pub(crate) process: RawUniqueProcess,
+    pub(crate) terminal_session_id: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct RawAffectedApplications {
+    pub(crate) applications: Vec<RawApplication>,
+    pub(crate) reboot_reasons: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RawFilterTarget {
+    Executable(PathBuf),
+    Process(RawUniqueProcess),
+    Service(OsString),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RawFilter {
+    pub(crate) target: RawFilterTarget,
+    pub(crate) action: i32,
+}
+
 #[cfg(windows)]
-#[allow(dead_code)]
 mod windows {
+    use super::*;
     use std::any::Any;
-    use std::ffi::{OsStr, OsString};
     use std::mem::{self, MaybeUninit};
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
-    use std::path::{Path, PathBuf};
     use std::ptr;
     use std::sync::{Mutex, TryLockError};
 
@@ -33,67 +97,6 @@ mod windows {
     };
 
     const MAX_LIST_ATTEMPTS: usize = 8;
-
-    pub(crate) type SysResult<T> = std::result::Result<T, SysError>;
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) enum SysError {
-        UnsupportedPlatform,
-        Os(u32),
-        HResult(i32),
-        InvalidInput(&'static str),
-        CountOverflow,
-        AllocationFailure,
-        CallbackInUse,
-        DataChanged(u32),
-        MalformedOutput(&'static str),
-        SessionEnded,
-    }
-
-    impl SysError {
-        pub(crate) const fn raw_os_error(self) -> Option<u32> {
-            match self {
-                Self::Os(code) => Some(code),
-                _ => None,
-            }
-        }
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct RawUniqueProcess {
-        pub(crate) pid: u32,
-        pub(crate) start_time: u64,
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct RawApplication {
-        pub(crate) display_name: OsString,
-        pub(crate) service_name: OsString,
-        pub(crate) application_type: i32,
-        pub(crate) status: u32,
-        pub(crate) restartable: bool,
-        pub(crate) process: RawUniqueProcess,
-        pub(crate) terminal_session_id: u32,
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct RawAffectedApplications {
-        pub(crate) applications: Vec<RawApplication>,
-        pub(crate) reboot_reasons: u32,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(crate) enum RawFilterTarget {
-        Executable(PathBuf),
-        Process(RawUniqueProcess),
-        Service(OsString),
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(crate) struct RawFilter {
-        pub(crate) target: RawFilterTarget,
-        pub(crate) action: i32,
-    }
 
     /// Owns one native session handle and calls `RmEndSession` exactly once.
     pub(crate) struct SessionHandle {
@@ -119,7 +122,7 @@ mod windows {
         }
 
         pub(crate) fn join(key: &str) -> SysResult<Self> {
-            let key = WideString::new(OsStr::new(key))?;
+            let key = WideString::new(OsStr::new(key));
             let mut raw = 0;
             // SAFETY: the output pointer is valid and `key` is NUL-terminated.
             let code = unsafe { RmJoinSession(&mut raw, key.as_ptr()) };
@@ -142,12 +145,12 @@ mod windows {
 
             let file_strings = files
                 .iter()
-                .map(|path| absolute_file(path).and_then(|path| WideString::new(path.as_os_str())))
-                .collect::<SysResult<Vec<_>>>()?;
+                .map(|path| WideString::new(path.as_os_str()))
+                .collect::<Vec<_>>();
             let service_strings = services
                 .iter()
                 .map(|name| WideString::new(name))
-                .collect::<SysResult<Vec<_>>>()?;
+                .collect::<Vec<_>>();
             let file_ptrs = file_strings
                 .iter()
                 .map(WideString::as_ptr)
@@ -256,11 +259,10 @@ mod windows {
             let mut service = None;
             match target {
                 RawFilterTarget::Executable(path) => {
-                    let path = absolute_file(path)?;
-                    filename = Some(WideString::new(path.as_os_str())?);
+                    filename = Some(WideString::new(path.as_os_str()));
                 }
                 RawFilterTarget::Process(value) => process = Some(native_unique_process(*value)),
-                RawFilterTarget::Service(name) => service = Some(WideString::new(name)?),
+                RawFilterTarget::Service(name) => service = Some(WideString::new(name)),
             }
             // SAFETY: exactly one target is populated, all optional pointers are
             // either null or refer to live, correctly shaped values.
@@ -282,11 +284,10 @@ mod windows {
             let mut service = None;
             match target {
                 RawFilterTarget::Executable(path) => {
-                    let path = absolute_file(path)?;
-                    filename = Some(WideString::new(path.as_os_str())?);
+                    filename = Some(WideString::new(path.as_os_str()));
                 }
                 RawFilterTarget::Process(value) => process = Some(native_unique_process(*value)),
-                RawFilterTarget::Service(name) => service = Some(WideString::new(name)?),
+                RawFilterTarget::Service(name) => service = Some(WideString::new(name)),
             }
             // SAFETY: exactly one target is populated and all non-null pointers
             // remain valid for the call.
@@ -413,7 +414,7 @@ mod windows {
     }
 
     pub(crate) fn register_application_restart(arguments: &OsStr, flags: u32) -> SysResult<()> {
-        let arguments = WideString::new(arguments)?;
+        let arguments = WideString::new(arguments);
         let pointer = if arguments.0.len() == 1 {
             ptr::null()
         } else {
@@ -488,15 +489,8 @@ mod windows {
     struct WideString(Vec<u16>);
 
     impl WideString {
-        fn new(value: &OsStr) -> SysResult<Self> {
-            let mut encoded = value.encode_wide().collect::<Vec<_>>();
-            if encoded.contains(&0) {
-                return Err(SysError::InvalidInput(
-                    "strings may not contain an embedded NUL",
-                ));
-            }
-            encoded.push(0);
-            Ok(Self(encoded))
+        fn new(value: &OsStr) -> Self {
+            Self(value.encode_wide().chain(std::iter::once(0)).collect())
         }
 
         fn as_ptr(&self) -> *const u16 {
@@ -512,15 +506,6 @@ mod windows {
                 "a fixed-width UTF-16 field was not NUL-terminated",
             ))?;
         Ok(OsString::from_wide(&value[..nul]))
-    }
-
-    fn absolute_file(path: &Path) -> SysResult<PathBuf> {
-        std::path::absolute(path).map_err(|error| {
-            error.raw_os_error().map_or(
-                SysError::InvalidInput("file path could not be made absolute"),
-                |code| SysError::Os(code as u32),
-            )
-        })
     }
 
     fn count(length: usize) -> SysResult<u32> {
@@ -870,10 +855,10 @@ mod windows {
         use std::panic::AssertUnwindSafe;
 
         #[test]
-        fn utf16_rejects_nul_and_fixed_fields_require_termination() {
+        fn utf16_conversion_is_mechanical_and_fixed_fields_require_termination() {
             assert_eq!(
-                WideString::new(OsStr::new("a\0b")).unwrap_err(),
-                SysError::InvalidInput("strings may not contain an embedded NUL")
+                WideString::new(OsStr::new("a\0b")).0,
+                [b'a' as u16, 0, b'b' as u16, 0]
             );
             assert!(decode_fixed(&[b'a' as u16, 0, b'b' as u16]).is_ok());
             assert!(matches!(
@@ -1016,11 +1001,6 @@ mod windows {
                 );
             }
             assert_eq!(check(5).unwrap_err(), SysError::Os(5));
-            assert!(
-                absolute_file(Path::new("relative.file"))
-                    .unwrap()
-                    .is_absolute()
-            );
             assert!(process_from_pid(u32::MAX).is_err());
 
             let (handle, _) = SessionHandle::start().unwrap();
@@ -1117,71 +1097,8 @@ mod windows {
 pub(crate) use windows::*;
 
 #[cfg(not(windows))]
-#[allow(dead_code)]
 mod unsupported {
-    use std::ffi::{OsStr, OsString};
-    use std::path::PathBuf;
-
-    pub(crate) type SysResult<T> = std::result::Result<T, SysError>;
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) enum SysError {
-        UnsupportedPlatform,
-        Os(u32),
-        HResult(i32),
-        InvalidInput(&'static str),
-        CountOverflow,
-        AllocationFailure,
-        CallbackInUse,
-        DataChanged(u32),
-        MalformedOutput(&'static str),
-        SessionEnded,
-    }
-
-    impl SysError {
-        pub(crate) const fn raw_os_error(self) -> Option<u32> {
-            match self {
-                Self::Os(code) => Some(code),
-                _ => None,
-            }
-        }
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct RawUniqueProcess {
-        pub(crate) pid: u32,
-        pub(crate) start_time: u64,
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct RawApplication {
-        pub(crate) display_name: OsString,
-        pub(crate) service_name: OsString,
-        pub(crate) application_type: i32,
-        pub(crate) status: u32,
-        pub(crate) restartable: bool,
-        pub(crate) process: RawUniqueProcess,
-        pub(crate) terminal_session_id: u32,
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct RawAffectedApplications {
-        pub(crate) applications: Vec<RawApplication>,
-        pub(crate) reboot_reasons: u32,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(crate) enum RawFilterTarget {
-        Executable(PathBuf),
-        Process(RawUniqueProcess),
-        Service(OsString),
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(crate) struct RawFilter {
-        pub(crate) target: RawFilterTarget,
-        pub(crate) action: i32,
-    }
+    use super::*;
 
     pub(crate) struct SessionHandle;
 

@@ -13,6 +13,7 @@ use crate::application::{
 };
 use crate::error::{Error, ErrorKind, ParseSessionKeyError, Result};
 use crate::filter::{Filter, FilterAction, FilterTarget};
+use crate::input::{absolute_user_path, validate_user_os_value};
 use crate::resource::ResourceBatch;
 use crate::shutdown::{OperationOutcome, Progress, RecoveryOutcome, ShutdownOptions};
 use crate::sys::{
@@ -129,7 +130,7 @@ impl SessionCore {
         let services = resources
             .services()
             .map(|name| {
-                validate_os_value(name, "a service short name")?;
+                validate_user_os_value(name, "a service short name")?;
                 Ok(name.to_os_string())
             })
             .collect::<Result<Vec<_>>>()?;
@@ -242,7 +243,7 @@ impl RestartSession {
             .handle
             .shutdown(options.native_flags())
             .map_err(|error| map_operation_error(error, Operation::Shutdown));
-        pending.shutdown = OperationOutcome::from_result(result);
+        pending.shutdown = Some(OperationOutcome::from_result(result));
         pending
     }
 
@@ -274,15 +275,17 @@ impl RestartSession {
                 };
                 return Err(OperationNotStarted::new(state, map_sys_error(error)));
             }
-            pending.shutdown =
-                OperationOutcome::Failed(map_operation_error(error, Operation::Shutdown));
+            pending.shutdown = Some(OperationOutcome::Failed(map_operation_error(
+                error,
+                Operation::Shutdown,
+            )));
             return Ok(pending);
         }
-        pending.shutdown = if malformed {
+        pending.shutdown = Some(if malformed {
             OperationOutcome::Failed(malformed_progress_error())
         } else {
             OperationOutcome::Succeeded
-        };
+        });
         Ok(pending)
     }
 
@@ -327,16 +330,14 @@ impl RestartSession {
 #[must_use = "dropping this value attempts recovery; call restart or leave_stopped explicitly"]
 pub struct RestartPending {
     core: Option<SessionCore>,
-    shutdown: OperationOutcome,
-    armed: bool,
+    shutdown: Option<OperationOutcome>,
 }
 
 impl RestartPending {
     fn new(core: SessionCore) -> Self {
         Self {
             core: Some(core),
-            shutdown: OperationOutcome::Succeeded,
-            armed: true,
+            shutdown: Some(OperationOutcome::Succeeded),
         }
     }
 
@@ -345,14 +346,22 @@ impl RestartPending {
     }
 
     fn take_core(&mut self) -> SessionCore {
-        self.armed = false;
         self.core.take().expect("pending session owns its core")
+    }
+
+    fn take_shutdown(&mut self) -> OperationOutcome {
+        self.shutdown
+            .take()
+            .expect("pending session owns its shutdown outcome")
     }
 
     /// Returns the retained shutdown result.
     #[must_use]
     pub const fn shutdown_outcome(&self) -> &OperationOutcome {
-        &self.shutdown
+        match self.shutdown.as_ref() {
+            Some(outcome) => outcome,
+            None => panic!("pending session owns its shutdown outcome"),
+        }
     }
 
     /// Attempts restart even when shutdown failed.
@@ -364,7 +373,7 @@ impl RestartPending {
             .restart()
             .map_err(|error| map_operation_error(error, Operation::Restart));
         let outcome = RecoveryOutcome {
-            shutdown: self.shutdown.clone(),
+            shutdown: self.take_shutdown(),
             restart: Some(OperationOutcome::from_result(result)),
         };
         RecoveryCompletion {
@@ -395,7 +404,7 @@ impl RestartPending {
                 return Err(OperationNotStarted::new(self, map_sys_error(error)));
             }
             let outcome = RecoveryOutcome {
-                shutdown: self.shutdown.clone(),
+                shutdown: self.take_shutdown(),
                 restart: Some(OperationOutcome::Failed(map_operation_error(
                     error,
                     Operation::Restart,
@@ -412,7 +421,7 @@ impl RestartPending {
             OperationOutcome::Succeeded
         };
         let outcome = RecoveryOutcome {
-            shutdown: self.shutdown.clone(),
+            shutdown: self.take_shutdown(),
             restart: Some(restart),
         };
         Ok(RecoveryCompletion {
@@ -425,7 +434,7 @@ impl RestartPending {
     #[must_use]
     pub fn leave_stopped(mut self) -> RecoveryCompletion {
         let outcome = RecoveryOutcome {
-            shutdown: self.shutdown.clone(),
+            shutdown: self.take_shutdown(),
             restart: None,
         };
         RecoveryCompletion {
@@ -437,12 +446,9 @@ impl RestartPending {
 
 impl Drop for RestartPending {
     fn drop(&mut self) {
-        if self.armed {
-            if let Some(core) = self.core.take() {
-                let _ = core.handle.restart();
-                drop(core);
-            }
-            self.armed = false;
+        if let Some(core) = self.core.take() {
+            let _ = core.handle.restart();
+            drop(core);
         }
     }
 }
@@ -513,6 +519,18 @@ impl<T> fmt::Debug for OperationNotStarted<T> {
             .field("state", &std::any::type_name::<T>())
             .field("error", &self.error)
             .finish()
+    }
+}
+
+impl<T> fmt::Display for OperationNotStarted<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+impl<T> std::error::Error for OperationNotStarted<T> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
     }
 }
 
@@ -672,33 +690,8 @@ fn operation_not_started(error: SysError) -> bool {
     )
 }
 
-fn validate_os_value(value: &OsStr, description: &'static str) -> Result<()> {
-    if value.is_empty() {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            None,
-            format!("{description} may not be empty"),
-        ));
-    }
-    if value.to_string_lossy().contains('\0') {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            None,
-            format!("{description} may not contain an embedded NUL"),
-        ));
-    }
-    Ok(())
-}
-
 fn validate_and_absolute_file(path: &Path) -> Result<PathBuf> {
-    validate_os_value(path.as_os_str(), "a file path")?;
-    let path = std::path::absolute(path).map_err(|error| {
-        Error::new(
-            ErrorKind::InvalidInput,
-            error.raw_os_error().map(|code| code as u32),
-            "a file path could not be made absolute",
-        )
-    })?;
+    let path = absolute_user_path(path, "a file path")?;
     if path.is_dir() {
         return Err(Error::new(
             ErrorKind::DirectoryNotSupported,
@@ -1089,6 +1082,8 @@ mod tests {
         assert_eq!(not_started.error().kind(), ErrorKind::CallbackInUse);
         assert!(not_started.state().session_key().as_str().len() == 32);
         assert!(format!("{not_started:?}").contains("OperationNotStarted"));
+        assert_eq!(not_started.to_string(), not_started.error().to_string());
+        assert!(std::error::Error::source(&not_started).is_some());
         let (session, _) = not_started.into_parts();
 
         let pending = session.shutdown();
@@ -1165,7 +1160,7 @@ mod tests {
         assert_eq!(report.applications()[0].terminal_session_id(), Some(4));
 
         for target in [
-            RawFilterTarget::Executable(PathBuf::from("absolute.exe")),
+            RawFilterTarget::Executable(std::path::absolute("absolute.exe").unwrap()),
             RawFilterTarget::Process(process),
             RawFilterTarget::Service(OsString::from("EventLog")),
         ] {
@@ -1181,6 +1176,24 @@ mod tests {
             .kind(),
             ErrorKind::MalformedOsData
         );
+        for target in [
+            RawFilterTarget::Executable(PathBuf::new()),
+            RawFilterTarget::Executable(PathBuf::from("relative.exe")),
+            RawFilterTarget::Executable({
+                let mut path = std::env::current_dir().unwrap();
+                path.push("bad\0filter.exe");
+                path
+            }),
+            RawFilterTarget::Service(OsString::new()),
+            RawFilterTarget::Service(OsString::from("bad\0service")),
+        ] {
+            assert_eq!(
+                filter_from_raw(RawFilter { target, action: 1 })
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::MalformedOsData
+            );
+        }
         assert_eq!(
             filter_from_raw(RawFilter {
                 target: RawFilterTarget::Process(RawUniqueProcess {

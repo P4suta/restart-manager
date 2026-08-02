@@ -24,6 +24,13 @@ the rest of the crate consumes.
   ordinary safe Rust.
 - Raw handles, pointers, callbacks, UTF-16 buffers, and `windows-sys` types do
   not cross the adapter boundary.
+- OS-string validation and path normalization happen once in the safe layer;
+  the adapter only performs the mechanical UTF-16 conversion.
 - The boundary is organized by lifecycle, input/UTF-16, application lists,
   filter buffers, callbacks, and application restart responsibilities. Its
   unsupported backend contains no unsafe code.
+- The borrowed `dyn FnMut` callback and boxed panic payload are the only stored
+  type-erased values. Restart Manager's
+  [progress callback](https://learn.microsoft.com/en-us/windows/win32/api/restartmanager/nc-restartmanager-rm_write_status_callback)
+  has no caller context pointer, so replacing that boundary with a manual
+  vtable would increase the unsafe surface.

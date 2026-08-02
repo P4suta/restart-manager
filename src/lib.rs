@@ -97,6 +97,7 @@ mod application;
 mod application_restart;
 mod error;
 mod filter;
+mod input;
 mod resource;
 mod session;
 mod shutdown;

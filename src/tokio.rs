@@ -9,6 +9,7 @@
 
 use std::borrow::Borrow;
 use std::ffi::OsStr;
+use std::fmt;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
@@ -19,11 +20,9 @@ use ::tokio::sync::{oneshot, watch};
 
 use crate::{
     AffectedApplications, CancellationHandle, Error, ErrorKind, Filter, FilterAction, FilterTarget,
-    OperationNotStarted, OperationOutcome, ProcessIdentity, Progress, RecoveryOutcome,
-    ResourceBatch, Result, SessionKey, ShutdownOptions,
+    OperationOutcome, ProcessIdentity, Progress, RecoveryOutcome, ResourceBatch, Result,
+    SessionKey, ShutdownOptions,
 };
-
-type Job = Box<dyn FnOnce(&mut WorkerState) + Send + 'static>;
 
 enum WorkerState {
     Primary(crate::RestartSession),
@@ -33,25 +32,118 @@ enum WorkerState {
     Empty,
 }
 
+enum Command {
+    PrimaryRegister {
+        resources: ResourceBatch,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    PrimaryAffected {
+        reply: oneshot::Sender<Result<AffectedApplications>>,
+    },
+    SetFilter {
+        target: FilterTarget,
+        action: FilterAction,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    RemoveFilter {
+        target: FilterTarget,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    Filters {
+        reply: oneshot::Sender<Result<Vec<Filter>>>,
+    },
+    Shutdown {
+        options: ShutdownOptions,
+        reply: oneshot::Sender<ShutdownReply>,
+    },
+    ShutdownWithProgress {
+        options: ShutdownOptions,
+        progress: watch::Sender<Option<Progress>>,
+        reply: oneshot::Sender<ShutdownReply>,
+    },
+    EndPrimary {
+        reply: oneshot::Sender<Result<()>>,
+    },
+    Restart {
+        reply: oneshot::Sender<Result<RecoveryOutcome>>,
+    },
+    RestartWithProgress {
+        progress: watch::Sender<Option<Progress>>,
+        reply: oneshot::Sender<RestartProgressReply>,
+    },
+    LeaveStopped {
+        reply: oneshot::Sender<Result<RecoveryOutcome>>,
+    },
+    CompletionAffected {
+        reply: oneshot::Sender<Result<AffectedApplications>>,
+    },
+    EndCompletion {
+        reply: oneshot::Sender<Result<RecoveryOutcome>>,
+    },
+    JoinedRegister {
+        resources: ResourceBatch,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    EndJoined {
+        reply: oneshot::Sender<Result<()>>,
+    },
+}
+
+#[cfg(all(test, windows))]
+#[derive(Clone)]
+struct WorkerExitNotification {
+    state: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+#[cfg(all(test, windows))]
+impl WorkerExitNotification {
+    fn new() -> Self {
+        Self {
+            state: std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
+        }
+    }
+
+    fn notify(&self) {
+        let (stopped, changed) = &*self.state;
+        *stopped.lock().unwrap_or_else(|error| error.into_inner()) = true;
+        changed.notify_all();
+    }
+
+    fn wait(&self) {
+        let (stopped, changed) = &*self.state;
+        let mut stopped = stopped.lock().unwrap_or_else(|error| error.into_inner());
+        while !*stopped {
+            stopped = changed
+                .wait(stopped)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+struct WorkerExitGuard(WorkerExitNotification);
+
+#[cfg(all(test, windows))]
+impl Drop for WorkerExitGuard {
+    fn drop(&mut self) {
+        self.0.notify();
+    }
+}
+
 struct Worker {
-    sender: mpsc::Sender<Job>,
+    sender: mpsc::Sender<Command>,
+    #[cfg(all(test, windows))]
+    exit: WorkerExitNotification,
 }
 
 impl Worker {
-    fn send(&self, job: Job) -> Result<()> {
-        self.sender.send(job).map_err(|_| worker_unavailable())
+    fn send(&self, command: Command) -> Result<()> {
+        self.sender.send(command).map_err(|_| worker_unavailable())
     }
 
-    async fn call<T, F>(&self, operation: F) -> Result<T>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut WorkerState) -> T + Send + 'static,
-    {
-        let (sender, receiver) = oneshot::channel();
-        self.send(Box::new(move |state| {
-            let _ = sender.send(operation(state));
-        }))?;
-        receiver.await.map_err(|_| worker_unavailable())
+    #[cfg(all(test, windows))]
+    fn exit_notification(&self) -> WorkerExitNotification {
+        self.exit.clone()
     }
 }
 
@@ -61,11 +153,17 @@ struct PrimaryInit {
 }
 
 async fn start_primary_worker() -> Result<(Worker, PrimaryInit)> {
-    let (job_sender, job_receiver) = mpsc::channel::<Job>();
+    let (command_sender, command_receiver) = mpsc::channel::<Command>();
     let (init_sender, init_receiver) = oneshot::channel();
+    #[cfg(all(test, windows))]
+    let exit = WorkerExitNotification::new();
+    #[cfg(all(test, windows))]
+    let thread_exit = exit.clone();
     std::thread::Builder::new()
         .name("restart-manager".to_owned())
         .spawn(move || {
+            #[cfg(all(test, windows))]
+            let _exit_guard = WorkerExitGuard(thread_exit);
             let session = match crate::RestartSession::new() {
                 Ok(session) => session,
                 Err(error) => {
@@ -80,7 +178,7 @@ async fn start_primary_worker() -> Result<(Worker, PrimaryInit)> {
             if init_sender.send(Ok(init)).is_err() {
                 return;
             }
-            run_worker(job_receiver, WorkerState::Primary(session));
+            run_worker(command_receiver, WorkerState::Primary(session));
         })
         .map_err(|error| {
             Error::new(
@@ -90,15 +188,28 @@ async fn start_primary_worker() -> Result<(Worker, PrimaryInit)> {
             )
         })?;
     let init = init_receiver.await.map_err(|_| worker_unavailable())??;
-    Ok((Worker { sender: job_sender }, init))
+    Ok((
+        Worker {
+            sender: command_sender,
+            #[cfg(all(test, windows))]
+            exit,
+        },
+        init,
+    ))
 }
 
 async fn start_joined_worker(key: SessionKey) -> Result<Worker> {
-    let (job_sender, job_receiver) = mpsc::channel::<Job>();
+    let (command_sender, command_receiver) = mpsc::channel::<Command>();
     let (init_sender, init_receiver) = oneshot::channel();
+    #[cfg(all(test, windows))]
+    let exit = WorkerExitNotification::new();
+    #[cfg(all(test, windows))]
+    let thread_exit = exit.clone();
     std::thread::Builder::new()
         .name("restart-manager-joined".to_owned())
         .spawn(move || {
+            #[cfg(all(test, windows))]
+            let _exit_guard = WorkerExitGuard(thread_exit);
             let session = match crate::JoinedSession::join(&key) {
                 Ok(session) => session,
                 Err(error) => {
@@ -109,7 +220,7 @@ async fn start_joined_worker(key: SessionKey) -> Result<Worker> {
             if init_sender.send(Ok(())).is_err() {
                 return;
             }
-            run_worker(job_receiver, WorkerState::Joined(session));
+            run_worker(command_receiver, WorkerState::Joined(session));
         })
         .map_err(|error| {
             Error::new(
@@ -119,13 +230,216 @@ async fn start_joined_worker(key: SessionKey) -> Result<Worker> {
             )
         })?;
     init_receiver.await.map_err(|_| worker_unavailable())??;
-    Ok(Worker { sender: job_sender })
+    Ok(Worker {
+        sender: command_sender,
+        #[cfg(all(test, windows))]
+        exit,
+    })
 }
 
-fn run_worker(receiver: mpsc::Receiver<Job>, mut state: WorkerState) {
-    while let Ok(job) = receiver.recv() {
-        job(&mut state);
+fn run_worker(receiver: mpsc::Receiver<Command>, mut state: WorkerState) {
+    while let Ok(command) = receiver.recv() {
+        execute_command(command, &mut state);
     }
+}
+
+fn execute_command(command: Command, state: &mut WorkerState) {
+    match command {
+        Command::PrimaryRegister { resources, reply } => {
+            let result = match state {
+                WorkerState::Primary(session) => session.register_resources(&resources),
+                _ => Err(wrong_state()),
+            };
+            let _ = reply.send(result);
+        }
+        Command::PrimaryAffected { reply } => {
+            let result = match state {
+                WorkerState::Primary(session) => session.affected_applications(),
+                _ => Err(wrong_state()),
+            };
+            let _ = reply.send(result);
+        }
+        Command::SetFilter {
+            target,
+            action,
+            reply,
+        } => {
+            let result = match state {
+                WorkerState::Primary(session) => session.set_filter(&target, action),
+                _ => Err(wrong_state()),
+            };
+            let _ = reply.send(result);
+        }
+        Command::RemoveFilter { target, reply } => {
+            let result = match state {
+                WorkerState::Primary(session) => session.remove_filter(&target),
+                _ => Err(wrong_state()),
+            };
+            let _ = reply.send(result);
+        }
+        Command::Filters { reply } => {
+            let result = match state {
+                WorkerState::Primary(session) => session.filters(),
+                _ => Err(wrong_state()),
+            };
+            let _ = reply.send(result);
+        }
+        Command::Shutdown { options, reply } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Primary(session) => {
+                    let pending = session.shutdown_with_options(options);
+                    let outcome = pending.shutdown_outcome().clone();
+                    *state = WorkerState::Pending(pending);
+                    ShutdownReply::Pending(outcome)
+                }
+                other => {
+                    *state = other;
+                    ShutdownReply::Failed(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+        Command::ShutdownWithProgress {
+            options,
+            progress,
+            reply,
+        } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Primary(session) => {
+                    match session.shutdown_with_progress(options, |value| {
+                        progress.send_replace(Some(value));
+                    }) {
+                        Ok(pending) => {
+                            let outcome = pending.shutdown_outcome().clone();
+                            *state = WorkerState::Pending(pending);
+                            ShutdownReply::Pending(outcome)
+                        }
+                        Err(not_started) => {
+                            let (session, error) = not_started.into_parts();
+                            *state = WorkerState::Primary(session);
+                            ShutdownReply::Recoverable(error)
+                        }
+                    }
+                }
+                other => {
+                    *state = other;
+                    ShutdownReply::Failed(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+        Command::EndPrimary { reply } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Primary(session) => session.end(),
+                other => {
+                    *state = other;
+                    Err(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+        Command::Restart { reply } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Pending(pending) => {
+                    let completion = pending.restart();
+                    let outcome = completion.outcome().clone();
+                    *state = WorkerState::Completion(completion);
+                    Ok(outcome)
+                }
+                other => {
+                    *state = other;
+                    Err(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+        Command::RestartWithProgress { progress, reply } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Pending(pending) => {
+                    match pending.restart_with_progress(|value| {
+                        progress.send_replace(Some(value));
+                    }) {
+                        Ok(completion) => {
+                            let outcome = completion.outcome().clone();
+                            *state = WorkerState::Completion(completion);
+                            RestartProgressReply::Completed(outcome)
+                        }
+                        Err(not_started) => {
+                            let (pending, error) = not_started.into_parts();
+                            *state = WorkerState::Pending(pending);
+                            RestartProgressReply::Recoverable(error)
+                        }
+                    }
+                }
+                other => {
+                    *state = other;
+                    RestartProgressReply::Failed(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+        Command::LeaveStopped { reply } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Pending(pending) => {
+                    let completion = pending.leave_stopped();
+                    let outcome = completion.outcome().clone();
+                    *state = WorkerState::Completion(completion);
+                    Ok(outcome)
+                }
+                other => {
+                    *state = other;
+                    Err(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+        Command::CompletionAffected { reply } => {
+            let result = match state {
+                WorkerState::Completion(completion) => completion.affected_applications(),
+                _ => Err(wrong_state()),
+            };
+            let _ = reply.send(result);
+        }
+        Command::EndCompletion { reply } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Completion(completion) => completion.end(),
+                other => {
+                    *state = other;
+                    Err(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+        Command::JoinedRegister { resources, reply } => {
+            let result = match state {
+                WorkerState::Joined(session) => session.register_resources(&resources),
+                _ => Err(wrong_state()),
+            };
+            let _ = reply.send(result);
+        }
+        Command::EndJoined { reply } => {
+            let previous = std::mem::replace(state, WorkerState::Empty);
+            let result = match previous {
+                WorkerState::Joined(session) => session.end(),
+                other => {
+                    *state = other;
+                    Err(wrong_state())
+                }
+            };
+            let _ = reply.send(result);
+        }
+    }
+}
+
+async fn receive<T>(receiver: oneshot::Receiver<T>) -> Result<T> {
+    receiver.await.map_err(|_| worker_unavailable())
 }
 
 fn worker_unavailable() -> Error {
@@ -142,6 +456,72 @@ fn wrong_state() -> Error {
         None,
         "the asynchronous worker received an operation for the wrong typestate",
     )
+}
+
+/// Error from an async consuming operation.
+///
+/// A callback-lease conflict occurs before native work and retains the
+/// reusable typestate. Worker failure or an internal state mismatch returns no
+/// state because the facade cannot prove that retrying it would be sound.
+pub struct AsyncOperationError<T> {
+    state: Option<T>,
+    error: Error,
+}
+
+impl<T> AsyncOperationError<T> {
+    fn recoverable(state: T, error: Error) -> Self {
+        Self {
+            state: Some(state),
+            error,
+        }
+    }
+
+    fn unavailable(error: Error) -> Self {
+        Self { state: None, error }
+    }
+
+    /// Returns the operation error.
+    #[must_use]
+    pub const fn error(&self) -> &Error {
+        &self.error
+    }
+
+    /// Returns reusable state only when native work is known not to have begun.
+    #[must_use]
+    pub const fn state(&self) -> Option<&T> {
+        self.state.as_ref()
+    }
+
+    /// Separates the optional reusable state and operation error.
+    #[must_use]
+    pub fn into_parts(self) -> (Option<T>, Error) {
+        (self.state, self.error)
+    }
+}
+
+impl<T> fmt::Debug for AsyncOperationError<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AsyncOperationError")
+            .field(
+                "state",
+                &self.state.as_ref().map(|_| std::any::type_name::<T>()),
+            )
+            .field("error", &self.error)
+            .finish()
+    }
+}
+
+impl<T> fmt::Display for AsyncOperationError<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+impl<T> std::error::Error for AsyncOperationError<T> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 /// Cloneable, coalescing receiver for asynchronous native progress.
@@ -196,13 +576,12 @@ impl RestartSession {
 
     /// Registers a resource batch in one worker command.
     pub async fn register_resources(&mut self, resources: &ResourceBatch) -> Result<()> {
-        let resources = resources.clone();
-        self.worker
-            .call(move |state| match state {
-                WorkerState::Primary(session) => session.register_resources(&resources),
-                _ => Err(wrong_state()),
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        self.worker.send(Command::PrimaryRegister {
+            resources: resources.clone(),
+            reply,
+        })?;
+        receive(receiver).await?
     }
 
     /// Registers file paths.
@@ -246,44 +625,37 @@ impl RestartSession {
 
     /// Takes an affected-application snapshot.
     pub async fn affected_applications(&mut self) -> Result<AffectedApplications> {
-        self.worker
-            .call(|state| match state {
-                WorkerState::Primary(session) => session.affected_applications(),
-                _ => Err(wrong_state()),
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        self.worker.send(Command::PrimaryAffected { reply })?;
+        receive(receiver).await?
     }
 
     /// Adds or replaces a filter.
     pub async fn set_filter(&mut self, target: &FilterTarget, action: FilterAction) -> Result<()> {
-        let target = target.clone();
-        self.worker
-            .call(move |state| match state {
-                WorkerState::Primary(session) => session.set_filter(&target, action),
-                _ => Err(wrong_state()),
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        self.worker.send(Command::SetFilter {
+            target: target.clone(),
+            action,
+            reply,
+        })?;
+        receive(receiver).await?
     }
 
     /// Removes a filter.
     pub async fn remove_filter(&mut self, target: &FilterTarget) -> Result<()> {
-        let target = target.clone();
-        self.worker
-            .call(move |state| match state {
-                WorkerState::Primary(session) => session.remove_filter(&target),
-                _ => Err(wrong_state()),
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        self.worker.send(Command::RemoveFilter {
+            target: target.clone(),
+            reply,
+        })?;
+        receive(receiver).await?
     }
 
     /// Lists filters.
     pub async fn filters(&mut self) -> Result<Vec<Filter>> {
-        self.worker
-            .call(|state| match state {
-                WorkerState::Primary(session) => session.filters(),
-                _ => Err(wrong_state()),
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        self.worker.send(Command::Filters { reply })?;
+        receive(receiver).await?
     }
 
     /// Starts a graceful shutdown future.
@@ -300,26 +672,12 @@ impl RestartSession {
             key,
             cancellation,
         } = self;
-        let (sender, receiver) = oneshot::channel();
-        let _ = worker.send(Box::new(move |state| {
-            let previous = std::mem::replace(state, WorkerState::Empty);
-            match previous {
-                WorkerState::Primary(session) => {
-                    let pending = session.shutdown_with_options(options);
-                    let outcome = pending.shutdown_outcome().clone();
-                    *state = WorkerState::Pending(pending);
-                    let _ = sender.send(ShutdownReply::Pending(outcome));
-                }
-                other => {
-                    *state = other;
-                    let _ = sender.send(ShutdownReply::NotStarted(wrong_state()));
-                }
-            }
-        }));
+        let (reply, receiver) = oneshot::channel();
+        let _ = worker.send(Command::Shutdown { options, reply });
         ShutdownFuture {
             worker: Some(worker),
-            key,
-            cancellation,
+            key: Some(key),
+            cancellation: Some(cancellation),
             receiver,
             cancel_on_drop: true,
         }
@@ -337,37 +695,17 @@ impl RestartSession {
             cancellation,
         } = self;
         let (progress_sender, progress_receiver) = watch::channel(None);
-        let (sender, receiver) = oneshot::channel();
-        let _ = worker.send(Box::new(move |state| {
-            let previous = std::mem::replace(state, WorkerState::Empty);
-            match previous {
-                WorkerState::Primary(session) => {
-                    match session.shutdown_with_progress(options, |progress| {
-                        progress_sender.send_replace(Some(progress));
-                    }) {
-                        Ok(pending) => {
-                            let outcome = pending.shutdown_outcome().clone();
-                            *state = WorkerState::Pending(pending);
-                            let _ = sender.send(ShutdownReply::Pending(outcome));
-                        }
-                        Err(not_started) => {
-                            let (session, error) = not_started.into_parts();
-                            *state = WorkerState::Primary(session);
-                            let _ = sender.send(ShutdownReply::NotStarted(error));
-                        }
-                    }
-                }
-                other => {
-                    *state = other;
-                    let _ = sender.send(ShutdownReply::NotStarted(wrong_state()));
-                }
-            }
-        }));
+        let (reply, receiver) = oneshot::channel();
+        let _ = worker.send(Command::ShutdownWithProgress {
+            options,
+            progress: progress_sender,
+            reply,
+        });
         (
             ShutdownFuture {
                 worker: Some(worker),
-                key,
-                cancellation,
+                key: Some(key),
+                cancellation: Some(cancellation),
                 receiver,
                 cancel_on_drop: true,
             },
@@ -380,24 +718,16 @@ impl RestartSession {
     /// Ends the session without shutdown.
     pub async fn end(self) -> Result<()> {
         let Self { worker, .. } = self;
-        worker
-            .call(|state| {
-                let previous = std::mem::replace(state, WorkerState::Empty);
-                match previous {
-                    WorkerState::Primary(session) => session.end(),
-                    other => {
-                        *state = other;
-                        Err(wrong_state())
-                    }
-                }
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        worker.send(Command::EndPrimary { reply })?;
+        receive(receiver).await?
     }
 }
 
 enum ShutdownReply {
     Pending(OperationOutcome),
-    NotStarted(Error),
+    Recoverable(Error),
+    Failed(Error),
 }
 
 /// Future for an asynchronous shutdown attempt.
@@ -406,14 +736,14 @@ enum ShutdownReply {
 /// session and will restart anything partially stopped before ending.
 pub struct ShutdownFuture {
     worker: Option<Worker>,
-    key: SessionKey,
-    cancellation: CancellationHandle,
+    key: Option<SessionKey>,
+    cancellation: Option<CancellationHandle>,
     receiver: oneshot::Receiver<ShutdownReply>,
     cancel_on_drop: bool,
 }
 
 impl Future for ShutdownFuture {
-    type Output = std::result::Result<RestartPending, OperationNotStarted<RestartSession>>;
+    type Output = std::result::Result<RestartPending, AsyncOperationError<RestartSession>>;
 
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -426,23 +756,25 @@ impl Future for ShutdownFuture {
                     shutdown,
                 }))
             }
-            Poll::Ready(Ok(ShutdownReply::NotStarted(error))) => {
+            Poll::Ready(Ok(ShutdownReply::Recoverable(error))) => {
                 this.cancel_on_drop = false;
                 let state = RestartSession {
                     worker: this.worker.take().expect("future owns its worker"),
-                    key: this.key.clone(),
-                    cancellation: this.cancellation.clone(),
+                    key: this.key.take().expect("future owns its session key"),
+                    cancellation: this
+                        .cancellation
+                        .take()
+                        .expect("future owns its cancellation handle"),
                 };
-                Poll::Ready(Err(OperationNotStarted::new(state, error)))
+                Poll::Ready(Err(AsyncOperationError::recoverable(state, error)))
+            }
+            Poll::Ready(Ok(ShutdownReply::Failed(error))) => {
+                this.cancel_on_drop = false;
+                Poll::Ready(Err(AsyncOperationError::unavailable(error)))
             }
             Poll::Ready(Err(_)) => {
                 this.cancel_on_drop = false;
-                let state = RestartSession {
-                    worker: this.worker.take().expect("future owns its worker"),
-                    key: this.key.clone(),
-                    cancellation: this.cancellation.clone(),
-                };
-                Poll::Ready(Err(OperationNotStarted::new(state, worker_unavailable())))
+                Poll::Ready(Err(AsyncOperationError::unavailable(worker_unavailable())))
             }
         }
     }
@@ -450,8 +782,10 @@ impl Future for ShutdownFuture {
 
 impl Drop for ShutdownFuture {
     fn drop(&mut self) {
-        if self.cancel_on_drop {
-            let _ = self.cancellation.cancel();
+        if self.cancel_on_drop
+            && let Some(cancellation) = &self.cancellation
+        {
+            let _ = cancellation.cancel();
         }
     }
 }
@@ -477,22 +811,8 @@ impl RestartPending {
             worker,
             shutdown: _,
         } = self;
-        let (sender, receiver) = oneshot::channel();
-        let _ = worker.send(Box::new(move |state| {
-            let previous = std::mem::replace(state, WorkerState::Empty);
-            match previous {
-                WorkerState::Pending(pending) => {
-                    let completion = pending.restart();
-                    let outcome = completion.outcome().clone();
-                    *state = WorkerState::Completion(completion);
-                    let _ = sender.send(Ok(outcome));
-                }
-                other => {
-                    *state = other;
-                    let _ = sender.send(Err(wrong_state()));
-                }
-            }
-        }));
+        let (reply, receiver) = oneshot::channel();
+        let _ = worker.send(Command::Restart { reply });
         RestartFuture {
             worker: Some(worker),
             receiver,
@@ -504,36 +824,15 @@ impl RestartPending {
     pub fn restart_with_progress(self) -> (RestartWithProgressFuture, ProgressReceiver) {
         let Self { worker, shutdown } = self;
         let (progress_sender, progress_receiver) = watch::channel(None);
-        let (sender, receiver) = oneshot::channel();
-        let _ = worker.send(Box::new(move |state| {
-            let previous = std::mem::replace(state, WorkerState::Empty);
-            match previous {
-                WorkerState::Pending(pending) => {
-                    match pending.restart_with_progress(|progress| {
-                        progress_sender.send_replace(Some(progress));
-                    }) {
-                        Ok(completion) => {
-                            let outcome = completion.outcome().clone();
-                            *state = WorkerState::Completion(completion);
-                            let _ = sender.send(RestartProgressReply::Completed(outcome));
-                        }
-                        Err(not_started) => {
-                            let (pending, error) = not_started.into_parts();
-                            *state = WorkerState::Pending(pending);
-                            let _ = sender.send(RestartProgressReply::NotStarted(error));
-                        }
-                    }
-                }
-                other => {
-                    *state = other;
-                    let _ = sender.send(RestartProgressReply::NotStarted(wrong_state()));
-                }
-            }
-        }));
+        let (reply, receiver) = oneshot::channel();
+        let _ = worker.send(Command::RestartWithProgress {
+            progress: progress_sender,
+            reply,
+        });
         (
             RestartWithProgressFuture {
                 worker: Some(worker),
-                shutdown,
+                shutdown: Some(shutdown),
                 receiver,
             },
             ProgressReceiver {
@@ -545,23 +844,9 @@ impl RestartPending {
     /// Explicitly opts out of restart.
     pub async fn leave_stopped(self) -> Result<RecoveryCompletion> {
         let Self { worker, .. } = self;
-        let outcome = worker
-            .call(|state| {
-                let previous = std::mem::replace(state, WorkerState::Empty);
-                match previous {
-                    WorkerState::Pending(pending) => {
-                        let completion = pending.leave_stopped();
-                        let outcome = completion.outcome().clone();
-                        *state = WorkerState::Completion(completion);
-                        Ok(outcome)
-                    }
-                    other => {
-                        *state = other;
-                        Err(wrong_state())
-                    }
-                }
-            })
-            .await??;
+        let (reply, receiver) = oneshot::channel();
+        worker.send(Command::LeaveStopped { reply })?;
+        let outcome = receive(receiver).await??;
         Ok(RecoveryCompletion { worker, outcome })
     }
 }
@@ -594,18 +879,19 @@ impl Future for RestartFuture {
 
 enum RestartProgressReply {
     Completed(RecoveryOutcome),
-    NotStarted(Error),
+    Recoverable(Error),
+    Failed(Error),
 }
 
 /// Future for restart with coalescing progress.
 pub struct RestartWithProgressFuture {
     worker: Option<Worker>,
-    shutdown: OperationOutcome,
+    shutdown: Option<OperationOutcome>,
     receiver: oneshot::Receiver<RestartProgressReply>,
 }
 
 impl Future for RestartWithProgressFuture {
-    type Output = std::result::Result<RecoveryCompletion, OperationNotStarted<RestartPending>>;
+    type Output = std::result::Result<RecoveryCompletion, AsyncOperationError<RestartPending>>;
 
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -617,19 +903,21 @@ impl Future for RestartWithProgressFuture {
                     outcome,
                 }))
             }
-            Poll::Ready(Ok(RestartProgressReply::NotStarted(error))) => {
+            Poll::Ready(Ok(RestartProgressReply::Recoverable(error))) => {
                 let state = RestartPending {
                     worker: this.worker.take().expect("future owns its worker"),
-                    shutdown: this.shutdown.clone(),
+                    shutdown: this
+                        .shutdown
+                        .take()
+                        .expect("future owns its shutdown outcome"),
                 };
-                Poll::Ready(Err(OperationNotStarted::new(state, error)))
+                Poll::Ready(Err(AsyncOperationError::recoverable(state, error)))
+            }
+            Poll::Ready(Ok(RestartProgressReply::Failed(error))) => {
+                Poll::Ready(Err(AsyncOperationError::unavailable(error)))
             }
             Poll::Ready(Err(_)) => {
-                let state = RestartPending {
-                    worker: this.worker.take().expect("future owns its worker"),
-                    shutdown: this.shutdown.clone(),
-                };
-                Poll::Ready(Err(OperationNotStarted::new(state, worker_unavailable())))
+                Poll::Ready(Err(AsyncOperationError::unavailable(worker_unavailable())))
             }
         }
     }
@@ -650,29 +938,17 @@ impl RecoveryCompletion {
 
     /// Takes a post-operation report.
     pub async fn affected_applications(&mut self) -> Result<AffectedApplications> {
-        self.worker
-            .call(|state| match state {
-                WorkerState::Completion(completion) => completion.affected_applications(),
-                _ => Err(wrong_state()),
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        self.worker.send(Command::CompletionAffected { reply })?;
+        receive(receiver).await?
     }
 
     /// Ends the worker-owned session and returns both outcomes.
     pub async fn end(self) -> Result<RecoveryOutcome> {
         let Self { worker, .. } = self;
-        worker
-            .call(|state| {
-                let previous = std::mem::replace(state, WorkerState::Empty);
-                match previous {
-                    WorkerState::Completion(completion) => completion.end(),
-                    other => {
-                        *state = other;
-                        Err(wrong_state())
-                    }
-                }
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        worker.send(Command::EndCompletion { reply })?;
+        receive(receiver).await?
     }
 }
 
@@ -698,13 +974,12 @@ impl JoinedSession {
 
     /// Registers a resource batch.
     pub async fn register_resources(&mut self, resources: &ResourceBatch) -> Result<()> {
-        let resources = resources.clone();
-        self.worker
-            .call(move |state| match state {
-                WorkerState::Joined(session) => session.register_resources(&resources),
-                _ => Err(wrong_state()),
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        self.worker.send(Command::JoinedRegister {
+            resources: resources.clone(),
+            reply,
+        })?;
+        receive(receiver).await?
     }
 
     /// Registers file paths.
@@ -749,18 +1024,9 @@ impl JoinedSession {
     /// Ends the joined handle.
     pub async fn end(self) -> Result<()> {
         let Self { worker, .. } = self;
-        worker
-            .call(|state| {
-                let previous = std::mem::replace(state, WorkerState::Empty);
-                match previous {
-                    WorkerState::Joined(session) => session.end(),
-                    other => {
-                        *state = other;
-                        Err(wrong_state())
-                    }
-                }
-            })
-            .await?
+        let (reply, receiver) = oneshot::channel();
+        worker.send(Command::EndJoined { reply })?;
+        receive(receiver).await?
     }
 }
 
@@ -792,6 +1058,15 @@ mod tests {
                 Poll::Ready(output) => return output,
                 Poll::Pending => std::thread::park(),
             }
+        }
+    }
+
+    fn disconnected_worker() -> Worker {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        Worker {
+            sender,
+            exit: WorkerExitNotification::new(),
         }
     }
 
@@ -842,15 +1117,22 @@ mod tests {
         let cancellation = session.cancellation_handle();
         session.end().unwrap();
 
-        let (job_sender, job_receiver) = mpsc::channel();
-        drop(job_receiver);
-        let worker = Worker { sender: job_sender };
+        let (reply, _receiver) = oneshot::channel();
+        assert_eq!(
+            disconnected_worker()
+                .send(Command::Filters { reply })
+                .unwrap_err()
+                .kind(),
+            ErrorKind::AsyncWorkerUnavailable
+        );
+
+        let worker = disconnected_worker();
         let (reply_sender, receiver) = oneshot::channel();
         drop(reply_sender);
         let future = ShutdownFuture {
             worker: Some(worker),
-            key,
-            cancellation,
+            key: Some(key),
+            cancellation: Some(cancellation),
             receiver,
             cancel_on_drop: true,
         };
@@ -859,10 +1141,12 @@ mod tests {
             Err(error) => error,
         };
         assert_eq!(error.error().kind(), ErrorKind::AsyncWorkerUnavailable);
+        assert!(error.state().is_none());
+        assert!(format!("{error:?}").contains("AsyncOperationError"));
+        assert_eq!(error.to_string(), error.error().to_string());
+        assert!(std::error::Error::source(&error).is_some());
 
-        let (job_sender, job_receiver) = mpsc::channel();
-        drop(job_receiver);
-        let worker = Worker { sender: job_sender };
+        let worker = disconnected_worker();
         let (reply_sender, receiver) = oneshot::channel();
         drop(reply_sender);
         let result = block_on(RestartFuture {
@@ -874,6 +1158,107 @@ mod tests {
             Err(error) => error,
         };
         assert_eq!(error.kind(), ErrorKind::AsyncWorkerUnavailable);
+
+        let worker = disconnected_worker();
+        let (reply_sender, receiver) = oneshot::channel();
+        drop(reply_sender);
+        let result = block_on(RestartWithProgressFuture {
+            worker: Some(worker),
+            shutdown: Some(OperationOutcome::Succeeded),
+            receiver,
+        });
+        let error = match result {
+            Ok(_) => panic!("a disconnected restart-progress reply unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(error.error().kind(), ErrorKind::AsyncWorkerUnavailable);
+        assert!(error.state().is_none());
+    }
+
+    #[test]
+    fn callback_conflicts_retain_only_provably_reusable_async_state() {
+        let session = block_on(RestartSession::new()).unwrap();
+        let error = crate::sys::with_callback_lease_for_test(|| {
+            let (shutdown, _progress) = session.shutdown_with_progress(ShutdownOptions::default());
+            match block_on(shutdown) {
+                Err(error) => error,
+                Ok(_) => panic!("shutdown unexpectedly acquired the callback lease"),
+            }
+        });
+        assert_eq!(error.error().kind(), ErrorKind::CallbackInUse);
+        assert!(error.state().is_some());
+        let (session, _) = error.into_parts();
+
+        let pending = block_on(
+            session
+                .expect("callback conflict retains the session")
+                .shutdown(),
+        )
+        .unwrap();
+        let error = crate::sys::with_callback_lease_for_test(|| {
+            let (restart, _progress) = pending.restart_with_progress();
+            match block_on(restart) {
+                Err(error) => error,
+                Ok(_) => panic!("restart unexpectedly acquired the callback lease"),
+            }
+        });
+        assert_eq!(error.error().kind(), ErrorKind::CallbackInUse);
+        assert!(error.state().is_some());
+        let (pending, _) = error.into_parts();
+        let completion = block_on(
+            pending
+                .expect("callback conflict retains the pending state")
+                .leave_stopped(),
+        )
+        .unwrap();
+        block_on(completion.end()).unwrap();
+    }
+
+    #[test]
+    fn wrong_command_state_is_reported_without_changing_the_worker_state() {
+        let primary = block_on(RestartSession::new()).unwrap();
+        let (reply, receiver) = oneshot::channel();
+        primary
+            .worker
+            .send(Command::JoinedRegister {
+                resources: ResourceBatch::new(),
+                reply,
+            })
+            .unwrap();
+        let error = block_on(receive(receiver)).unwrap().unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::OperationOutOfSequence);
+        block_on(primary.end()).unwrap();
+    }
+
+    #[test]
+    fn internal_shutdown_state_mismatch_does_not_expose_retryable_state() {
+        let session = block_on(RestartSession::new()).unwrap();
+        let key = session.session_key().clone();
+        let cancellation = session.cancellation_handle();
+        let pending = block_on(session.shutdown()).unwrap();
+        let RestartPending {
+            worker,
+            shutdown: _,
+        } = pending;
+        let (reply, receiver) = oneshot::channel();
+        worker
+            .send(Command::Shutdown {
+                options: ShutdownOptions::default(),
+                reply,
+            })
+            .unwrap();
+        let error = match block_on(ShutdownFuture {
+            worker: Some(worker),
+            key: Some(key),
+            cancellation: Some(cancellation),
+            receiver,
+            cancel_on_drop: true,
+        }) {
+            Err(error) => error,
+            Ok(_) => panic!("shutdown unexpectedly accepted the pending worker state"),
+        };
+        assert_eq!(error.error().kind(), ErrorKind::OperationOutOfSequence);
+        assert!(error.state().is_none());
     }
 
     #[test]
@@ -957,22 +1342,26 @@ mod tests {
         let _test_guard = crate::sys::serialize_callback_test();
         let session = block_on(RestartSession::new()).unwrap();
         let pending = block_on(session.shutdown()).unwrap();
+        let exit = pending.worker.exit_notification();
         drop(pending.restart());
+        exit.wait();
 
         let session = block_on(RestartSession::new()).unwrap();
         let pending = block_on(session.shutdown()).unwrap();
+        let exit = pending.worker.exit_notification();
         let (restart, _progress) = pending.restart_with_progress();
         drop(restart);
+        exit.wait();
 
-        std::thread::sleep(std::time::Duration::from_millis(100));
         crate::RestartSession::new().unwrap().end().unwrap();
     }
 
     #[test]
     fn dropping_shutdown_future_leaves_cleanup_with_the_worker() {
         let session = block_on(RestartSession::new()).unwrap();
+        let exit = session.worker.exit_notification();
         drop(session.shutdown());
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        exit.wait();
         crate::RestartSession::new().unwrap().end().unwrap();
     }
 }
