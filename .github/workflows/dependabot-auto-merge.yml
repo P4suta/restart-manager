@@ -1,0 +1,146 @@
+name: Dependabot guarded auto-merge
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
+
+permissions: {}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evaluate:
+    name: Evaluate the guarded policy
+    if: >-
+      github.repository == 'P4suta/restart-manager' &&
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.policy.outputs.eligible }}
+    steps:
+      - name: Checkout only the trusted base-branch policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/dependabot-auto-merge-policy.jq
+          sparse-checkout-cone-mode: false
+
+      # Dependabot tokens are restricted by default, so this job requests only
+      # read scopes. Only the pinned base SHA above is checked out; pull-request
+      # code is never checked out or executed.
+      - id: metadata
+        name: Read verified Dependabot metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: policy
+        name: Apply the automatic-update policy
+        env:
+          UPDATES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          eligible=false
+
+          # Cargo follows special 0.x compatibility rules. A 0.x minor update
+          # can contain breaking changes, so only its patch updates are automatic.
+          if jq -e -f .github/scripts/dependabot-auto-merge-policy.jq \
+            <<<"$UPDATES" > /dev/null; then
+            eligible=true
+          fi
+
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Dependabot auto-merge policy"
+            echo
+            if [[ "$eligible" == "true" ]]; then
+              echo "Eligible: verified patch updates and compatible minor updates only."
+            else
+              echo "Manual review required: the update is outside the automatic policy."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  auto-merge:
+    name: Apply the guarded auto-merge decision
+    needs: evaluate
+    if: >-
+      always() &&
+      (needs.evaluate.result == 'success' ||
+        needs.evaluate.result == 'failure' ||
+        needs.evaluate.result == 'skipped') &&
+      github.repository == 'P4suta/restart-manager' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: live-guard
+        name: Revalidate the live pull request and clear stale auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          live=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")
+          jq -e \
+            --arg repository "$REPOSITORY" \
+            --arg head_sha "$HEAD_SHA" \
+            '
+              .state == "open" and
+              .user.login == "dependabot[bot]" and
+              .head.repo.full_name == $repository and
+              .head.sha == $head_sha
+            ' <<<"$live" > /dev/null
+
+          safe=true
+          if [[ "$(jq -r '.draft' <<<"$live")" != "false" || \
+                "$(jq -r '.base.ref' <<<"$live")" != "main" ]]; then
+            safe=false
+          fi
+          changed_files=$(gh api --paginate \
+            "repos/$REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename')
+          if grep -Eq \
+            '^\.github/(workflows/dependabot-auto-merge[.]yml|scripts/dependabot-auto-merge-policy[.]jq)$' \
+            <<<"$changed_files"; then
+            safe=false
+          fi
+          echo "safe=$safe" >> "$GITHUB_OUTPUT"
+
+          if [[ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" == "true" ]]; then
+            gh pr merge "$PR_URL" --disable-auto
+          fi
+
+      - name: Enable squash auto-merge behind required checks
+        if: >-
+          needs.evaluate.result == 'success' &&
+          needs.evaluate.outputs.eligible == 'true' &&
+          steps.live-guard.outputs.safe == 'true' &&
+          github.actor == 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        shell: bash
+        run: >-
+          gh pr merge "$PR_URL"
+          --auto
+          --squash
+          --match-head-commit "$HEAD_SHA"

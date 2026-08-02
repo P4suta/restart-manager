@@ -22,4 +22,5 @@ or unrelated user process.
 
 Public API changes require updated default/all-feature snapshots, semver review,
 CHANGELOG notes, and a design record when lifecycle or unsafe invariants
-change.
+change. Snapshot filenames are stable across releases:
+`api/restart-manager-default.txt` and `api/restart-manager-all.txt`.
