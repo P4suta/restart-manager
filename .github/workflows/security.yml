@@ -29,3 +29,21 @@ jobs:
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
+
+  required:
+    name: Dependency policy required
+    if: always()
+    needs:
+      - cargo-deny
+      - dependency-review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject an unsuccessful or missing dependency-policy result
+        if: >-
+          needs.cargo-deny.result != 'success' ||
+          (github.event_name == 'pull_request' && needs.dependency-review.result != 'success') ||
+          (github.event_name != 'pull_request' && needs.dependency-review.result != 'skipped')
+        shell: bash
+        run: exit 1
+      - name: Confirm the dependency policy succeeded
+        run: echo "The dependency policy succeeded."

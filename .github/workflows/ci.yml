@@ -284,3 +284,39 @@ jobs:
             cargo generate-lockfile --manifest-path "$consumer/Cargo.toml"
             cargo check --manifest-path "$consumer/Cargo.toml" --locked
           }
+
+  required:
+    name: CI required
+    if: always()
+    needs:
+      - workflow-quality
+      - windows-quality
+      - windows-latest
+      - msrv
+      - target-checks
+      - portable
+      - miri
+      - coverage
+      - public-api
+      - semver
+      - package-consumer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject an unsuccessful or missing CI result
+        if: >-
+          needs.workflow-quality.result != 'success' ||
+          needs.windows-quality.result != 'success' ||
+          needs.windows-latest.result != 'success' ||
+          needs.msrv.result != 'success' ||
+          needs.target-checks.result != 'success' ||
+          needs.portable.result != 'success' ||
+          needs.miri.result != 'success' ||
+          needs.coverage.result != 'success' ||
+          needs.public-api.result != 'success' ||
+          needs.package-consumer.result != 'success' ||
+          (github.event_name == 'pull_request' && needs.semver.result != 'success') ||
+          (github.event_name != 'pull_request' && needs.semver.result != 'skipped')
+        shell: bash
+        run: exit 1
+      - name: Confirm all required CI jobs succeeded
+        run: echo "All required CI jobs succeeded."
