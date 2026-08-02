@@ -36,6 +36,9 @@ jobs:
       - name: Test release metadata rejection cases
         shell: pwsh
         run: ./.github/scripts/test-release-metadata.ps1
+      - name: Test package consumer and checksum helper
+        shell: pwsh
+        run: ./.github/scripts/test-package-consumer.ps1
 
   windows-quality:
     name: Windows 2022 quality, native, and E2E
@@ -259,34 +262,11 @@ jobs:
       - run: cargo package --locked
       - name: Consume only the packaged source
         shell: pwsh
-        run: |
-          $archive = Resolve-Path "${{ steps.package.outputs.archive_path }}"
-          $unpack = Join-Path $env:RUNNER_TEMP restart-manager-package
-          New-Item -ItemType Directory -Path $unpack | Out-Null
-          tar -xf $archive -C $unpack
-          $source = (Resolve-Path "$unpack/${{ steps.package.outputs.source_directory }}").Path.Replace('\', '/')
-
-          foreach ($variant in @('default', 'all')) {
-            $consumer = Join-Path $env:RUNNER_TEMP "restart-manager-consumer-$variant"
-            cargo new --bin $consumer
-            $featureClause = if ($variant -eq 'all') { ', features = ["tokio"]' } else { '' }
-            @"
-          [package]
-          name = "restart-manager-consumer-$variant"
-          version = "0.0.0"
-          edition = "2024"
-
-          [dependencies]
-          restart-manager = { path = "$source"$featureClause }
-          "@ | Set-Content -Encoding utf8 "$consumer/Cargo.toml"
-            @"
-          fn main() {
-              let _ = restart_manager::ShutdownOptions::default();
-          }
-          "@ | Set-Content -Encoding utf8 "$consumer/src/main.rs"
-            cargo generate-lockfile --manifest-path "$consumer/Cargo.toml"
-            cargo check --manifest-path "$consumer/Cargo.toml" --locked
-          }
+        run: >-
+          ./.github/scripts/package-consumer.ps1
+          -PackageName "${{ steps.package.outputs.package_name }}"
+          -PackageVersion "${{ steps.package.outputs.package_version }}"
+          -ArchivePath "${{ steps.package.outputs.archive_path }}"
 
   required:
     name: CI required
