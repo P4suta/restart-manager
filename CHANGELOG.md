@@ -14,7 +14,7 @@ All notable changes are recorded here.
 - Compile-checked blocking and Tokio installer/update recipes.
 - Release metadata, package-consumer, SBOM, provenance, and publication checks.
 - Guarded Dependabot auto-merge for verified compatible dependency updates.
-- Human-reviewed release-plz automation for version and CHANGELOG pull requests.
+- Human-reviewed release-plz automation with environment-scoped App credentials.
 
 The release workflow requires a dated `## [0.1.0] - YYYY-MM-DD` heading on the
 commit that receives the annotated `v0.1.0` tag. The `Unreleased` heading is
