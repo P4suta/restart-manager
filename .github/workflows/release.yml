@@ -1,4 +1,4 @@
-name: Release verification and dormant publishing
+name: Release verification and publishing
 
 on:
   push:
@@ -11,13 +11,17 @@ on:
         required: true
         default: false
       trusted_publishing:
-        description: Use crates.io Trusted Publishing after bootstrap
+        description: Use crates.io Trusted Publishing (disable only for 0.1.0 bootstrap)
         type: boolean
         required: true
-        default: false
+        default: true
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   verify:
@@ -26,7 +30,10 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      artifact-metadata: write
     outputs:
+      package_name: ${{ steps.package.outputs.package_name }}
+      package_version: ${{ steps.package.outputs.package_version }}
       archive_name: ${{ steps.package.outputs.archive_name }}
       archive_path: ${{ steps.package.outputs.archive_path }}
       artifact_name: ${{ steps.package.outputs.artifact_name }}
@@ -68,67 +75,55 @@ jobs:
       - run: cargo test --doc --all-features --locked
       - run: cargo run --locked --package xtask -- e2e
       - run: cargo package --locked
-      - name: Record package allowlist and digest
+      - name: Record package allowlist and standard SHA-256 checksum
         shell: pwsh
         run: |
-          cargo package --list --locked | Set-Content package-files.txt
-          (Get-FileHash "${{ steps.package.outputs.archive_path }}" -Algorithm SHA256).Hash |
-            Set-Content "${{ steps.package.outputs.checksum_name }}"
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+          cargo package --list --locked | Set-Content -Encoding utf8 package-files.txt
+          $archive = "${{ steps.package.outputs.archive_path }}"
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ${{ steps.package.outputs.archive_name }}" |
+            Set-Content -Encoding ascii "${{ steps.package.outputs.checksum_name }}"
+      - name: Smoke-test the verified package
+        shell: pwsh
+        run: >-
+          ./.github/scripts/package-consumer.ps1
+          -PackageName "${{ steps.package.outputs.package_name }}"
+          -PackageVersion "${{ steps.package.outputs.package_version }}"
+          -ArchivePath "${{ steps.package.outputs.archive_path }}"
+          -ExpectedChecksumPath "${{ steps.package.outputs.checksum_name }}"
+      - name: Generate SPDX JSON from the verified package
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          path: ${{ steps.package.outputs.archive_path }}
+          file: ${{ steps.package.outputs.archive_path }}
           format: spdx-json
           output-file: ${{ steps.package.outputs.sbom_name }}
-      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest package build provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-path: ${{ steps.package.outputs.archive_path }}
+      - name: Attest package SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: ${{ steps.package.outputs.archive_path }}
+          sbom-path: ${{ steps.package.outputs.sbom_name }}
+      - name: Stage the exact verified release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-artifacts | Out-Null
+          Copy-Item "${{ steps.package.outputs.archive_path }}" release-artifacts
+          Copy-Item "${{ steps.package.outputs.checksum_name }}" release-artifacts
+          Copy-Item "${{ steps.package.outputs.sbom_name }}" release-artifacts
+          Copy-Item package-files.txt release-artifacts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.package.outputs.artifact_name }}
-          path: |
-            ${{ steps.package.outputs.archive_path }}
-            ${{ steps.package.outputs.checksum_name }}
-            ${{ steps.package.outputs.sbom_name }}
-            package-files.txt
+          path: release-artifacts/
+          if-no-files-found: error
 
-  publish-token-bootstrap:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && !inputs.trusted_publishing
-    needs: verify
-    runs-on: windows-2022
-    environment: crates-io
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: 1.97.1
-      - id: package
-        name: Re-verify release metadata
-        shell: pwsh
-        run: >-
-          ./.github/scripts/release-metadata.ps1
-          -ExpectedTag "${{ github.ref_name }}"
-          -RequireRelease
-          -RequireAnnotatedTag
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: ${{ needs.verify.outputs.artifact_name }}
-          path: verified
-      - name: Reproduce and compare verified package
-        shell: pwsh
-        run: |
-          cargo package --locked
-          $actual = (Get-FileHash "${{ steps.package.outputs.archive_path }}" -Algorithm SHA256).Hash
-          $expected = (Get-Content "verified/${{ needs.verify.outputs.checksum_name }}").Trim()
-          if ($actual -ne $expected) { throw "verified package digest mismatch" }
-      - name: First-publication bootstrap only
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
-
-  publish-trusted:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && inputs.trusted_publishing
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: verify
     runs-on: windows-2022
     environment: crates-io
@@ -150,20 +145,161 @@ jobs:
           -ExpectedTag "${{ github.ref_name }}"
           -RequireRelease
           -RequireAnnotatedTag
+      - name: Restrict token bootstrap to the initial release
+        if: ${{ !inputs.trusted_publishing }}
+        shell: pwsh
+        run: |
+          if ('${{ steps.package.outputs.package_version }}' -ne '0.1.0') {
+            throw 'token publishing is restricted to the initial 0.1.0 bootstrap'
+          }
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ needs.verify.outputs.artifact_name }}
           path: verified
-      - name: Reproduce and compare verified package
+      - name: Reproduce and compare the verified package
         shell: pwsh
         run: |
           cargo package --locked
-          $actual = (Get-FileHash "${{ steps.package.outputs.archive_path }}" -Algorithm SHA256).Hash
-          $expected = (Get-Content "verified/${{ needs.verify.outputs.checksum_name }}").Trim()
-          if ($actual -ne $expected) { throw "verified package digest mismatch" }
+          $actual = (Get-FileHash "${{ steps.package.outputs.archive_path }}" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksum = (Get-Content -Raw "verified/${{ needs.verify.outputs.checksum_name }}").Trim()
+          $pattern = '^(?<hash>[0-9a-f]{64})  ' +
+            [regex]::Escape('${{ needs.verify.outputs.archive_name }}') + '$'
+          $expected = [regex]::Match($checksum, $pattern).Groups['hash'].Value
+          if ([string]::IsNullOrEmpty($expected) -or $actual -ne $expected) {
+            throw "verified package digest mismatch: expected $expected, got $actual"
+          }
+      - id: publication
+        name: Detect an identical existing crates.io publication
+        shell: pwsh
+        run: |
+          $name = '${{ steps.package.outputs.package_name }}'
+          $version = '${{ steps.package.outputs.package_version }}'
+          $uri = "https://crates.io/api/v1/crates/$name/$version/download"
+          $probe = Join-Path $env:RUNNER_TEMP '${{ steps.package.outputs.archive_name }}'
+          try {
+            Invoke-WebRequest -Uri $uri -OutFile $probe `
+              -TimeoutSec 30 `
+              -Headers @{ 'User-Agent' = 'restart-manager-release-verifier' }
+          } catch {
+            $status = $_.Exception.Response.StatusCode
+            if ($null -ne $status -and [int]$status -eq 404) {
+              'already_published=false' | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
+              exit 0
+            }
+            throw
+          }
+
+          $actual = (Get-FileHash $probe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksum = (Get-Content -Raw 'verified/${{ needs.verify.outputs.checksum_name }}').Trim()
+          $pattern = '^(?<hash>[0-9a-f]{64})  ' +
+            [regex]::Escape('${{ needs.verify.outputs.archive_name }}') + '$'
+          $expected = [regex]::Match($checksum, $pattern).Groups['hash'].Value
+          if ([string]::IsNullOrEmpty($expected) -or $actual -ne $expected) {
+            throw "crates.io already contains a different digest: expected $expected, got $actual"
+          }
+          'already_published=true' | Out-File $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - id: auth
+        if: steps.publication.outputs.already_published != 'true' && inputs.trusted_publishing
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
-      - name: Trusted publish
+      - name: Initial token publication
+        if: steps.publication.outputs.already_published != 'true' && !inputs.trusted_publishing
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+      - name: Trusted publication
+        if: steps.publication.outputs.already_published != 'true' && inputs.trusted_publishing
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked
+      - name: Verify crates.io archive and fresh consumers
+        shell: pwsh
+        run: >-
+          ./.github/scripts/package-consumer.ps1
+          -PackageName "${{ steps.package.outputs.package_name }}"
+          -PackageVersion "${{ steps.package.outputs.package_version }}"
+          -Registry
+          -ExpectedChecksumPath "verified/${{ needs.verify.outputs.checksum_name }}"
+          -RegistryAttempts 30
+          -RetryDelaySeconds 10
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [verify, publish]
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify.outputs.artifact_name }}
+          path: verified
+      - name: Verify checksum and attestations before release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $archive = 'verified/${{ needs.verify.outputs.archive_name }}'
+          $checksum = (Get-Content -Raw 'verified/${{ needs.verify.outputs.checksum_name }}').Trim()
+          $expectedLine = '^(?<hash>[0-9a-f]{64})  ' +
+            [regex]::Escape('${{ needs.verify.outputs.archive_name }}') + '$'
+          $expected = [regex]::Match($checksum, $expectedLine).Groups['hash'].Value
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ([string]::IsNullOrEmpty($expected) -or $actual -ne $expected) {
+            throw "release package digest mismatch: expected $expected, got $actual"
+          }
+          gh attestation verify $archive --repo '${{ github.repository }}'
+          if ($LASTEXITCODE -ne 0) { throw 'build provenance verification failed' }
+          gh attestation verify $archive --repo '${{ github.repository }}' `
+            --predicate-type 'https://spdx.dev/Document/v2.3'
+          if ($LASTEXITCODE -ne 0) { throw 'SBOM attestation verification failed' }
+      - name: Create or reuse the draft, attach exact assets, and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $repository = '${{ github.repository }}'
+          $releaseJson = gh release view $tag --repo $repository --json isDraft,assets 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $repository --draft --verify-tag `
+              --title $tag --notes-from-tag
+            if ($LASTEXITCODE -ne 0) { throw "failed to create draft release $tag" }
+            $releaseJson = gh release view $tag --repo $repository --json isDraft,assets
+            if ($LASTEXITCODE -ne 0) { throw "failed to read draft release $tag" }
+          }
+          $release = $releaseJson | ConvertFrom-Json -Depth 100
+          $existingNames = @($release.assets | ForEach-Object { $_.name })
+          $downloadRoot = Join-Path $env:RUNNER_TEMP "existing-release-assets"
+          New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
+          $assets = @(
+            'verified/${{ needs.verify.outputs.archive_name }}',
+            'verified/${{ needs.verify.outputs.checksum_name }}',
+            'verified/${{ needs.verify.outputs.sbom_name }}'
+          )
+
+          foreach ($assetPath in $assets) {
+            $assetName = Split-Path -Leaf $assetPath
+            if ($existingNames -contains $assetName) {
+              gh release download $tag --repo $repository --pattern $assetName `
+                --dir $downloadRoot
+              if ($LASTEXITCODE -ne 0) { throw "failed to download existing asset $assetName" }
+              $existingPath = Join-Path $downloadRoot $assetName
+              $expected = (Get-FileHash $assetPath -Algorithm SHA256).Hash
+              $actual = (Get-FileHash $existingPath -Algorithm SHA256).Hash
+              if ($actual -ne $expected) {
+                throw "refusing to overwrite release asset $assetName with a different digest"
+              }
+              continue
+            }
+
+            if (-not $release.isDraft) {
+              throw "published release $tag is missing required asset $assetName"
+            }
+            gh release upload $tag $assetPath --repo $repository
+            if ($LASTEXITCODE -ne 0) { throw "failed to upload release asset $assetName" }
+          }
+
+          if ($release.isDraft) {
+            gh release edit $tag --repo $repository --draft=false
+            if ($LASTEXITCODE -ne 0) { throw "failed to publish release $tag" }
+          }
