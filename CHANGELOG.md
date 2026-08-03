@@ -3,6 +3,26 @@
 All notable changes are recorded here.
 
 ## [Unreleased]
+## [0.1.0] - 2026-08-03
+
+
+### Added
+
+- scaffold the restart-manager crate
+- define role-aware restart manager API
+- implement Win32 adapter and session lifecycle
+- finalize restart manager 1.0 protocol
+
+### Other
+
+- complete publication and repository automation
+- publish the 1.0 API contract and runbooks
+- prepare restart-manager 0.1.0
+- add guarded dependency and release automation ([#2](https://github.com/P4suta/restart-manager/pull/2))
+- scope release-plz credentials to environment ([#3](https://github.com/P4suta/restart-manager/pull/3))
+- Simplify README and harden release verification ([#5](https://github.com/P4suta/restart-manager/pull/5))
+- Refine ownership and async error contracts ([#6](https://github.com/P4suta/restart-manager/pull/6))
+- Add licensing, spelling, and unsafe-documentation gates ([#7](https://github.com/P4suta/restart-manager/pull/7))
 
 ### Added
 
