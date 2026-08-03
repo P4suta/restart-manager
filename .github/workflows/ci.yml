@@ -47,8 +47,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
-      - uses: crate-ci/typos@bee27e3a4fd1ea2111cf90ab89cd076c870fce14 # v1.48.0
+      # reuse and typos are installed as tools rather than run through
+      # fsfe/reuse-action and crate-ci/typos, neither of which is on this
+      # repository's Actions allowlist. Keeping the allowlist unchanged is
+      # deliberate; taiki-e/install-action is already allowed.
+      - run: python -m pip install "reuse[charset-normalizer]==6.2.0"
+      - uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: typos-cli@1.48.0
+      - run: python -m reuse lint
+      - run: typos
 
   windows-quality:
     name: Windows 2022 quality, native, and E2E
