@@ -22,6 +22,8 @@ include = [
     "/CONTRIBUTING.md",
     "/LICENSE-APACHE",
     "/LICENSE-MIT",
+    "/LICENSES/**",
+    "/REUSE.toml",
     "/Cargo.toml",
     "/Cargo.lock",
 ]
@@ -37,6 +39,15 @@ tokio = ["dep:tokio"]
 [workspace]
 members = ["xtask"]
 resolver = "3"
+
+# CONTRIBUTING requires a specific safety justification on every `unsafe` block,
+# and ADR 0003 confines unsafe to `src/sys.rs`. This restriction lint makes that
+# rule machine-checked instead of a convention.
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[lints]
+workspace = true
 
 [dependencies]
 bitflags = "2"

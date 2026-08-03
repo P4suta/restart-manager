@@ -51,7 +51,7 @@ expect false "GitHub Actions 0.x patch" "$(
 expect false "major update" "$(update cargo version-update:semver-major 1.2.3 false)"
 expect false "same-version or digest update" "$(update github-actions '' v6.0.0 false)"
 expect false "maintainer changes" "$(update cargo version-update:semver-patch 1.2.3 true)"
-expect false "unparseable Cargo version" "$(update cargo version-update:semver-minor main false)"
+expect false "unparsable Cargo version" "$(update cargo version-update:semver-minor main false)"
 expect false "unknown ecosystem" "$(update npm version-update:semver-patch 1.2.3 false)"
 expect false "credential-bearing Action" "$(
   update github-actions version-update:semver-patch v3.2.0 false actions/create-github-app-token
