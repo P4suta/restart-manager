@@ -1,0 +1,49 @@
+version = 1
+
+[[annotations]]
+path = [
+  ".cargo/**",
+  ".github/**",
+  ".gitattributes",
+  ".gitignore",
+  "_typos.toml",
+  "api/**",
+  "Cargo.toml",
+  "CHANGELOG.md",
+  "CONTRIBUTING.md",
+  "deny.toml",
+  "docs/**",
+  "examples/**",
+  "README.md",
+  "release-plz.toml",
+  "SECURITY.md",
+  "src/**",
+  "tests/**",
+  "xtask/**",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Yasunobu Sakashita"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
+
+# Machine-generated lockfiles carry no copyrightable authorship. CC0 keeps
+# their redistribution unambiguous without treating them as hand-authored
+# dual-licensed source.
+[[annotations]]
+path = "Cargo.lock"
+precedence = "override"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "CC0-1.0"
+
+# Conventional root copies kept for Cargo ecosystem tooling. The canonical
+# texts REUSE reads live in LICENSES/.
+[[annotations]]
+path = "LICENSE-APACHE"
+precedence = "override"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "LICENSE-MIT"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Yasunobu Sakashita"
+SPDX-License-Identifier = "MIT"

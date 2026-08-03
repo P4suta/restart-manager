@@ -342,8 +342,10 @@ mod windows {
             if *ended {
                 return Err(SysError::SessionEnded);
             }
-            // Holding `ended` serializes this call with explicit end. An upgraded
-            // `Arc` also prevents `Drop` until cancellation returns.
+            // SAFETY: `self.raw` is a live session key. Holding the `ended`
+            // guard serializes this call against an explicit end, and the
+            // upgraded `Arc` keeps `Drop` from running until it returns, so the
+            // session cannot be closed underneath the call.
             check(unsafe { RmCancelCurrentTask(self.raw) })
         }
 
@@ -352,6 +354,9 @@ mod windows {
             if *ended {
                 return Ok(());
             }
+            // SAFETY: `self.raw` is a live session key, and the `ended` guard is
+            // held for the whole call, so no other caller can end the same
+            // session concurrently or observe it as ended before this returns.
             let result = check(unsafe { RmEndSession(self.raw) });
             if result.is_ok() {
                 *ended = true;
@@ -882,7 +887,12 @@ mod windows {
             let record_size = mem::size_of::<RM_FILTER_INFO>();
             let byte_len = record_size + text.len() * mem::size_of::<u16>();
             let mut buffer = AlignedBuffer::new(byte_len as u32).unwrap();
+            // SAFETY: `buffer` holds `byte_len` bytes, which is `record_size`
+            // plus the encoded text, so offsetting by `record_size` stays inside
+            // the allocation and leaves room for `text.len()` UTF-16 units.
             let text_pointer = unsafe { buffer.as_mut_ptr().add(record_size).cast::<u16>() };
+            // SAFETY: the destination range was just shown to be in bounds, and
+            // `text` is a separate allocation, so the regions cannot overlap.
             unsafe {
                 ptr::copy_nonoverlapping(text.as_ptr(), text_pointer, text.len());
             }
@@ -895,6 +905,9 @@ mod windows {
                 cbNextOffset: 0,
                 Anonymous: target,
             };
+            // SAFETY: the buffer is at least one record long. The write is
+            // deliberately unaligned because that is how the Restart Manager
+            // lays these records out, and the parser must cope with it.
             unsafe {
                 ptr::write_unaligned(buffer.as_mut_ptr().cast::<RM_FILTER_INFO>(), record);
             }
@@ -910,6 +923,10 @@ mod windows {
 
             let mut invalid = record;
             invalid.Anonymous.strFilename = (buffer.as_ptr() as usize + byte_len + 2) as *mut u16;
+            // SAFETY: only the record header is written, and it fits. The
+            // `strFilename` value it carries points outside the buffer on
+            // purpose: the point of the test is that the parser rejects it
+            // rather than dereferencing it.
             unsafe {
                 ptr::write_unaligned(buffer.as_mut_ptr().cast::<RM_FILTER_INFO>(), invalid);
             }
@@ -920,6 +937,8 @@ mod windows {
 
             invalid.cbNextOffset = 1;
             invalid.Anonymous.strFilename = text_pointer;
+            // SAFETY: as above, a single in-bounds record header write. The
+            // sub-record `cbNextOffset` is the malformed input under test.
             unsafe {
                 ptr::write_unaligned(buffer.as_mut_ptr().cast::<RM_FILTER_INFO>(), invalid);
             }
@@ -949,6 +968,8 @@ mod windows {
                 cbNextOffset: 0,
                 Anonymous: Default::default(),
             };
+            // SAFETY: the buffer is `record_size + 4` bytes, so one unaligned
+            // record header fits. `FilterTrigger` is the invalid input here.
             unsafe {
                 ptr::write_unaligned(buffer.as_mut_ptr().cast::<RM_FILTER_INFO>(), record);
             }
@@ -958,8 +979,12 @@ mod windows {
             ));
 
             record.FilterTrigger = RM_FILTER_TRIGGER_FILE;
+            // SAFETY: `record_size + 1` is within the `record_size + 4` byte
+            // allocation. The pointer is intentionally misaligned for `u16`; it
+            // is only stored in the record, never dereferenced here.
             record.Anonymous.strFilename =
                 unsafe { buffer.as_mut_ptr().add(record_size + 1).cast::<u16>() };
+            // SAFETY: one in-bounds unaligned record header write, as above.
             unsafe {
                 ptr::write_unaligned(buffer.as_mut_ptr().cast::<RM_FILTER_INFO>(), record);
             }
@@ -968,8 +993,14 @@ mod windows {
                 Err(SysError::MalformedOutput(_))
             ));
 
+            // SAFETY: `record_size` is within the `record_size + 4` byte
+            // allocation, so the pointer is in bounds.
             record.Anonymous.strFilename =
                 unsafe { buffer.as_mut_ptr().add(record_size).cast::<u16>() };
+            // SAFETY: all three writes stay inside the `record_size + 4` byte
+            // allocation -- the header, then two UTF-16 units at `record_size`
+            // and `record_size + 2`. They are deliberately left unterminated so
+            // the parser must reject the record instead of running off the end.
             unsafe {
                 ptr::write_unaligned(buffer.as_mut_ptr().cast::<RM_FILTER_INFO>(), record);
                 ptr::write_unaligned(
@@ -1044,7 +1075,14 @@ mod windows {
             let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 let mut callback = |_| panic!("callback panic");
                 run_with_callback(&mut callback, |native| {
+                    // SAFETY: `run_with_callback` only supplies `native` while
+                    // the lease it just installed is live, so the trampoline and
+                    // the state it reads are both valid for these calls. The
+                    // callback panics on purpose; the trampoline catches it.
                     unsafe { native.unwrap()(50) };
+                    // SAFETY: as above -- the lease is still held here, and the
+                    // second call proves the trampoline stays usable after the
+                    // first panic was caught.
                     unsafe { native.unwrap()(60) };
                     ERROR_SUCCESS
                 })
@@ -1055,6 +1093,9 @@ mod windows {
             let mut called = false;
             let mut callback = |_| called = true;
             run_with_callback(&mut callback, |native| {
+                // SAFETY: the lease installed by `run_with_callback` is live for
+                // the duration of this closure, so the trampoline pointer and
+                // the callback state it forwards to are both valid.
                 unsafe { native.unwrap()(100) };
                 ERROR_SUCCESS
             })

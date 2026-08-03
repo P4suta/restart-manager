@@ -20,6 +20,14 @@ All notable changes are recorded here.
 - Allocation-free OS-string validation, single-pass safe-layer path
   normalization, and malformed classification for invalid OS filter data.
 - Concrete example and xtask error enums without boxed error values.
+- REUSE 3.3 licensing metadata (`REUSE.toml` and `LICENSES/`), a `_typos.toml`,
+  and a CI job that enforces both. Licensing and spelling were the two baseline
+  gates the sibling Windows crates had and this one did not.
+- `clippy::undocumented_unsafe_blocks` is denied workspace-wide, so
+  CONTRIBUTING's "every `unsafe` block carries a specific safety justification"
+  rule is machine-checked. The blocks it flagged were the hardening tests that
+  fabricate malformed `RM_FILTER_INFO` records, which is exactly where the
+  invariants most needed writing down.
 
 The release workflow requires a dated `## [0.1.0] - YYYY-MM-DD` heading on the
 commit that receives the annotated `v0.1.0` tag. The `Unreleased` heading is
