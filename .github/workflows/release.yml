@@ -174,12 +174,18 @@ jobs:
         run: |
           $name = '${{ steps.package.outputs.package_name }}'
           $version = '${{ steps.package.outputs.package_version }}'
-          $uri = "https://crates.io/api/v1/crates/$name/$version/download"
+          $metadataUri = "https://crates.io/api/v1/crates/$name/$version"
           $probe = Join-Path $env:RUNNER_TEMP '${{ steps.package.outputs.archive_name }}'
+          $headers = @{ 'User-Agent' = 'restart-manager-release-verifier' }
+
+          # Ask the JSON endpoint whether the version exists. The download
+          # endpoint redirects to the static host, which answers 403
+          # AccessDenied rather than 404 for an object that is not there, so a
+          # first publication is indistinguishable from a real failure on that
+          # URL.
           try {
-            Invoke-WebRequest -Uri $uri -OutFile $probe `
-              -TimeoutSec 30 `
-              -Headers @{ 'User-Agent' = 'restart-manager-release-verifier' }
+            Invoke-WebRequest -Uri $metadataUri -TimeoutSec 30 -Headers $headers |
+              Out-Null
           } catch {
             $status = $_.Exception.Response.StatusCode
             if ($null -ne $status -and [int]$status -eq 404) {
@@ -188,6 +194,10 @@ jobs:
             }
             throw
           }
+
+          Invoke-WebRequest -Uri "$metadataUri/download" -OutFile $probe `
+            -TimeoutSec 30 `
+            -Headers $headers
 
           $actual = (Get-FileHash $probe -Algorithm SHA256).Hash.ToLowerInvariant()
           $checksum = (Get-Content -Raw 'verified/${{ needs.verify.outputs.checksum_name }}').Trim()
