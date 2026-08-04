@@ -262,6 +262,13 @@ jobs:
           gh attestation verify $archive --repo '${{ github.repository }}' `
             --predicate-type 'https://spdx.dev/Document/v2.3'
           if ($LASTEXITCODE -ne 0) { throw 'SBOM attestation verification failed' }
+      # `gh release create --notes-from-tag` reads the annotation from a local
+      # clone and rejects `--repo`, so the tag has to be checked out here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
       - name: Create or reuse the draft, attach exact assets, and publish
         shell: pwsh
         env:
@@ -271,7 +278,7 @@ jobs:
           $repository = '${{ github.repository }}'
           $releaseJson = gh release view $tag --repo $repository --json isDraft,assets 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --repo $repository --draft --verify-tag `
+            gh release create $tag --draft --verify-tag `
               --title $tag --notes-from-tag
             if ($LASTEXITCODE -ne 0) { throw "failed to create draft release $tag" }
             $releaseJson = gh release view $tag --repo $repository --json isDraft,assets
