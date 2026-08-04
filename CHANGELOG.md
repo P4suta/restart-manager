@@ -4,6 +4,10 @@ All notable changes are recorded here.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-03
+
+Initial release.
+
 ### Added
 
 - Owned shutdown/restart recovery typestates with automatic Drop recovery.
@@ -29,6 +33,18 @@ All notable changes are recorded here.
   fabricate malformed `RM_FILTER_INFO` records, which is exactly where the
   invariants most needed writing down.
 
-The release workflow requires a dated `## [0.1.0] - YYYY-MM-DD` heading on the
-commit that receives the annotated `v0.1.0` tag. The `Unreleased` heading is
-kept for future changes.
+### Known limitations
+
+These are properties of the Windows Restart Manager itself, not of this crate.
+They are the reason a caller may find the API less useful than its name
+suggests, so they are stated up front rather than discovered in production.
+
+- Restart only reaches services and applications that registered for restart
+  through `RegisterApplicationRestart`. Everything else can be shut down but
+  will not be brought back; a caller that needs guaranteed recovery must
+  restart those processes itself.
+- Windows allows at most 64 concurrent Restart Manager sessions machine-wide.
+  Exhausting them yields `ErrorKind::SessionLimit`.
+- Directories cannot be registered as resources.
+- Forced shutdown is opt-in and can lose unsaved data in the target
+  applications.
