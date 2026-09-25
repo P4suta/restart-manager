@@ -3,6 +3,13 @@
 All notable changes are recorded here.
 
 ## [Unreleased]
+## [0.1.1] - 2026-09-25
+
+
+### Other
+
+- bump thiserror from 2.0.19 to 2.0.20 in the rust-dependencies group ([#13](https://github.com/P4suta/restart-manager/pull/13))
+- bump bitflags from 2.13.1 to 2.13.2 in the rust-dependencies group ([#16](https://github.com/P4suta/restart-manager/pull/16))
 
 ## [0.1.0] - 2026-08-03
 
