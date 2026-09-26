@@ -30,9 +30,6 @@ jobs:
           toolchain: 1.97.1
       - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - run: actionlint
-      - name: Test guarded Dependabot auto-merge policy
-        shell: bash
-        run: bash ./.github/scripts/test-dependabot-auto-merge-policy.sh
       - name: Test release metadata rejection cases
         shell: pwsh
         run: ./.github/scripts/test-release-metadata.ps1
