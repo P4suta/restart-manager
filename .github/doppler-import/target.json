@@ -1,0 +1,10 @@
+{
+  "config": "crates_io",
+  "keys": [
+    "CARGO_REGISTRY_TOKEN"
+  ],
+  "project": "restart-manager",
+  "ref": "refs/heads/doppler-secret-import",
+  "repository": "P4suta/restart-manager",
+  "repository_id": "1319905206"
+}
