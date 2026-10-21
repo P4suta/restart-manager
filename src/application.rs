@@ -4,6 +4,8 @@ use std::ffi::{OsStr, OsString};
 
 use bitflags::bitflags;
 
+const RM_CRITICAL_APP_TYPE: i32 = 1000;
+
 /// A process identity made from its ID and creation time.
 ///
 /// Pairing both values prevents a recycled PID from identifying an unrelated
@@ -90,7 +92,7 @@ impl ApplicationType {
             3 => Self::Service,
             4 => Self::Explorer,
             5 => Self::Console,
-            1000 => Self::Critical,
+            RM_CRITICAL_APP_TYPE => Self::Critical,
             other => Self::Unrecognized(other),
         }
     }
@@ -105,7 +107,7 @@ impl ApplicationType {
             Self::Service => 3,
             Self::Explorer => 4,
             Self::Console => 5,
-            Self::Critical => 1000,
+            Self::Critical => RM_CRITICAL_APP_TYPE,
             Self::Unrecognized(value) => value,
         }
     }
