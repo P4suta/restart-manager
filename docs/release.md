@@ -29,11 +29,10 @@ Run **Release verification and publishing** manually against the annotated tag
 with `publish` enabled. Approve the protected `crates-io` environment only after
 the verification job succeeds.
 
-For the first `0.1.0` publication only, disable `trusted_publishing` and provide
-a package-scoped `CARGO_REGISTRY_TOKEN` in the environment. After crates.io has
-created the package, configure this repository and workflow as a crates.io
-Trusted Publisher, remove the token secret, and leave `trusted_publishing`
-enabled for every later release.
+Configure the existing package's crates.io Trusted Publisher for this repository, `release.yml`, and the `crates-io` environment.
+The workflow accepts only its short-lived OIDC token and has no stored-token selection or fallback.
+An unpublished package requires a separate authorized first-publication setup.
+See [credential delivery](credential-delivery.md) for the independent Doppler App identity and cutover checks.
 
 Cargo cannot upload the already-created archive directly: `cargo publish`
 packages the source again. The workflow therefore reproduces and compares the
