@@ -13,7 +13,11 @@ runs:
         BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       run: |
-        if git diff --quiet "$BASE" "$HEAD" -- src tests examples xtask api Cargo.toml Cargo.lock .cargo .github deny.toml; then
+        if git diff --quiet "$BASE" "$HEAD" -- \
+          ':(glob)**/*.rs' src tests examples benches xtask api \
+          Cargo.toml Cargo.lock .cargo .github .config \
+          rust-toolchain rust-toolchain.toml mise.toml mise.lock .mise.toml .mise.lock \
+          rustfmt.toml .rustfmt.toml clippy.toml .clippy.toml deny.toml; then
           echo 'rust=false' >> "$GITHUB_OUTPUT"
         else
           status=$?
