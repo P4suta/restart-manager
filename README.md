@@ -1,73 +1,32 @@
-# restart-manager
+# Restart-manager
 
-[![CI](https://github.com/P4suta/restart-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/P4suta/restart-manager/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/P4suta/restart-manager/actions/workflows/codeql.yml/badge.svg)](https://github.com/P4suta/restart-manager/actions/workflows/codeql.yml)
-
-Safe, human-friendly Restart Manager workflows for Rust applications that need
-to find, stop, and restart the Windows processes locking their files.
+Find and restart Windows processes locking files from Rust.
 
 ## Installation
 
-```console
+```sh
 cargo add restart-manager
 ```
 
-The default API is blocking. Enable the optional Tokio API when needed:
+## Usage
 
-```console
-cargo add restart-manager --features tokio
-```
-
-## Example
-
-Inspect the applications affected by replacing a file:
-
-```rust,no_run
+```rust
 use restart_manager::RestartSession;
 
 fn main() -> Result<(), restart_manager::Error> {
     let mut session = RestartSession::new()?;
-    session.register_files([r"C:\product\component.dll"])?;
-
+    session.register_files(["Cargo.toml"])?;
     let applications = session.affected_applications()?;
-    eprintln!("reboot reasons: {:?}", applications.reboot_reasons());
-    for application in &applications {
-        eprintln!(
-            "{} (restartable: {})",
-            application.display_name().to_string_lossy(),
-            application.is_restartable(),
-        );
-    }
-
+    println!("Affected applications: {}", applications.len());
     session.end()
 }
 ```
 
-## Important behavior
+## Documentation
 
-- Native operations are Windows-only. Public types remain available on other
-  targets, where OS operations return `ErrorKind::UnsupportedPlatform`.
-- Shutdown produces an owned `RestartPending` recovery value. It must be
-  restarted or explicitly completed with `leave_stopped`; dropping it makes
-  one best-effort restart attempt before ending the session.
-- Forced shutdown is opt-in and can cause applications to lose data.
-- Restart Manager can relaunch only services and applications that registered
-  themselves for restart.
-- Tokio shutdown/restart futures use `tokio::AsyncOperationError<T>`. Its
-  `state()` is `Some` only when a callback-lease conflict proves that native
-  work never began; worker failures return `None` rather than a misleading
-  retryable typestate.
-
-## More information
-
-- [API documentation](https://docs.rs/restart-manager)
-- [Blocking examples](examples/basic.rs) and [installer workflow](examples/installer.rs)
-- [Tokio installer example](examples/tokio_installer.rs)
-- [Changelog](CHANGELOG.md)
-- [Security policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
+[Read the documentation](docs/README.md).
 
 ## License
 
-Licensed under either [MIT](LICENSE-MIT) or
-[Apache-2.0](LICENSE-APACHE), at your option.
+Licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE) or the [Massachusetts Institute of Technology (MIT) license](LICENSE-MIT), at your option.
+You license each contribution you submit under the same two licenses, without other terms, unless you state otherwise.

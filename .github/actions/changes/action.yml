@@ -1,0 +1,26 @@
+name: Select Rust checks
+description: Select checks from the exact pull request or merge queue diff.
+outputs:
+  rust:
+    description: Whether the change affects Rust or its verification inputs.
+    value: ${{ steps.diff.outputs.rust }}
+runs:
+  using: composite
+  steps:
+    - id: diff
+      shell: bash
+      env:
+        BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        if git diff --quiet "$BASE" "$HEAD" -- \
+          ':(glob)**/*.rs' src tests examples benches xtask api \
+          Cargo.toml Cargo.lock .cargo .github .config \
+          rust-toolchain rust-toolchain.toml mise.toml mise.lock .mise.toml .mise.lock \
+          rustfmt.toml .rustfmt.toml clippy.toml .clippy.toml deny.toml; then
+          echo 'rust=false' >> "$GITHUB_OUTPUT"
+        else
+          status=$?
+          if [[ "$status" != 1 ]]; then exit "$status"; fi
+          echo 'rust=true' >> "$GITHUB_OUTPUT"
+        fi

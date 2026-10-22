@@ -15,6 +15,7 @@ path = [
   "docs/**",
   "examples/**",
   "README.md",
+  "repository.toml",
   "release-plz.toml",
   "SECURITY.md",
   "src/**",
