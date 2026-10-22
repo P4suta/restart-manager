@@ -1,0 +1,22 @@
+name = "restart-manager"
+summary = "Find and restart Windows processes locking files from Rust"
+install = "cargo add restart-manager"
+usage_language = "rust"
+usage = '''
+use restart_manager::RestartSession;
+
+fn main() -> Result<(), restart_manager::Error> {
+    let mut session = RestartSession::new()?;
+    session.register_files(["Cargo.toml"])?;
+    let applications = session.affected_applications()?;
+    println!("Affected applications: {}", applications.len());
+    session.end()
+}
+'''
+documentation_index = true
+copyright = "2026 Yasunobu Sakashita"
+license = "MIT OR Apache-2.0"
+
+[[consent]]
+contributor = "Yasunobu"
+evidence = "https://github.com/P4suta/restart-manager/commit/81ddf7ea2f411670f381e5aefc444be8f2ad6cbd"

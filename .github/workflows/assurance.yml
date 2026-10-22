@@ -1,0 +1,359 @@
+name: Candidate assurance
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assurance-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  workflow-quality:
+    name: Actions and release-metadata validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - name: Install actionlint
+        shell: bash
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: actionlint
+      - name: Test release metadata rejection cases
+        shell: pwsh
+        run: ./.github/scripts/test-release-metadata.ps1
+      - name: Test package consumer and checksum helper
+        shell: pwsh
+        run: ./.github/scripts/test-package-consumer.ps1
+
+  licensing:
+    name: Licensing and spelling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: python -m pip install "reuse[charset-normalizer]==6.2.0"
+      - uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf # v2.85.2
+        with:
+          tool: typos-cli@1.48.0
+      - run: python -m reuse lint
+      - run: typos
+
+  windows-quality:
+    name: Windows 2022 quality, native, and E2E
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+          components: clippy,rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-targets --all-features --locked -- --test-threads=1
+      - run: cargo test --doc --all-features --locked
+      - run: cargo run --locked --package xtask -- e2e
+      - name: Warning-free rustdoc
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --locked --no-deps
+      - run: cargo package --locked
+
+  windows-latest:
+    name: Windows latest native and E2E
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - run: cargo test --package restart-manager --all-targets --all-features --locked -- --test-threads=1
+      - run: cargo run --locked --package xtask -- e2e
+
+  msrv:
+    name: Rust 1.88 MSRV
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.88.0
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-targets --all-features --locked
+      - run: cargo test --package restart-manager --lib --locked
+
+  target-checks:
+    name: Compile ${{ matrix.target }} (${{ matrix.features }})
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - i686-pc-windows-msvc
+          - aarch64-pc-windows-msvc
+        features: [default, all]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.target }}
+      - if: matrix.features == 'default'
+        run: cargo check --package restart-manager --target ${{ matrix.target }} --locked
+      - if: matrix.features == 'all'
+        run: cargo check --package restart-manager --target ${{ matrix.target }} --all-features --locked
+
+  portable:
+    name: Portable API on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+          components: clippy
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-targets --all-features --locked
+      - run: cargo test --package restart-manager --all-targets --all-features --locked
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  miri:
+    name: Portable pure tests under Miri
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      MIRIFLAGS: -Zmiri-disable-isolation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly-2026-07-15
+          components: miri
+      - run: cargo miri setup
+      - run: cargo miri test --package restart-manager --lib --no-default-features --locked
+
+  coverage:
+    name: Library and unsafe boundary coverage >= 90%
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+          components: llvm-tools-preview
+      - run: cargo install cargo-llvm-cov --version 0.8.7 --locked
+      - run: cargo llvm-cov clean --workspace
+      - name: Test only the publishable library (no xtask dilution)
+        run: >-
+          cargo llvm-cov
+          --package restart-manager
+          --all-targets
+          --all-features
+          --locked
+          --fail-under-lines 90
+          --fail-under-regions 90
+          --fail-under-functions 90
+          --codecov
+          --output-path codecov.json
+          --
+          --test-threads=1
+      - run: cargo llvm-cov report --json --output-path coverage-summary.json
+      - name: Enforce unsafe sys line, region, and function coverage
+        shell: pwsh
+        run: |
+          $report = Get-Content -Raw coverage-summary.json | ConvertFrom-Json -Depth 100
+          $sys = $report.data[0].files |
+            Where-Object { $_.filename -like '*\src\sys.rs' } |
+            Select-Object -First 1
+          if ($null -eq $sys) { throw 'sys.rs is missing from coverage output' }
+          foreach ($metric in @('lines', 'regions', 'functions')) {
+            $percent = $sys.summary.$metric.percent
+            if ($percent -lt 90) {
+              throw "unsafe sys $metric coverage is $percent%, below 90%"
+            }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-codecov
+          retention-days: 7
+          path: |
+            codecov.json
+            coverage-summary.json
+
+  public-api:
+    name: Default and all-feature API snapshots
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly-2026-07-15
+      - id: package
+        name: Read package metadata
+        shell: pwsh
+        run: ./.github/scripts/release-metadata.ps1
+      - run: cargo install cargo-public-api --version 0.52.0 --locked
+      - shell: bash
+        run: |
+          cargo public-api -sss --no-default-features > public-api.default.txt
+          cargo public-api -sss --all-features > public-api.all.txt
+          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-default.txt" public-api.default.txt
+          git diff --no-index --exit-code "api/${{ steps.package.outputs.package_name }}-all.txt" public-api.all.txt
+
+  semver:
+    name: Reject breaking API changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - id: applicability
+        name: Find the latest annotated release baseline
+        shell: pwsh
+        run: |
+          $releaseTag = git for-each-ref --no-contains=HEAD --sort=-version:refname `
+            '--format=%(refname:short)|%(objecttype)' refs/tags |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+\|tag$' } |
+            ForEach-Object { ($_ -split '\|', 2)[0] } |
+            Select-Object -First 1
+          $run = -not [string]::IsNullOrWhiteSpace($releaseTag)
+          "run=$($run.ToString().ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          if ($run) {
+            "baseline=$releaseTag" |
+              Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          } else {
+            'Skipping semver comparison because no annotated release tag exists yet.' |
+              Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+      - if: steps.applicability.outputs.run == 'true'
+        run: cargo install cargo-semver-checks --version 0.49.0 --locked
+      - if: steps.applicability.outputs.run == 'true'
+        run: >-
+          cargo semver-checks
+          --package restart-manager
+          --all-features
+          --baseline-rev ${{ steps.applicability.outputs.baseline }}
+
+  package-consumer:
+    name: Packaged default/all-feature consumer smoke
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: 1.97.1
+      - id: package
+        name: Read package metadata
+        shell: pwsh
+        run: ./.github/scripts/release-metadata.ps1
+      - run: cargo package --locked
+      - name: Consume only the packaged source
+        shell: pwsh
+        run: >-
+          ./.github/scripts/package-consumer.ps1
+          -PackageName "${{ steps.package.outputs.package_name }}"
+          -PackageVersion "${{ steps.package.outputs.package_version }}"
+          -ArchivePath "${{ steps.package.outputs.archive_path }}"
+
+  required:
+    name: CI required
+    if: always()
+    needs:
+      - workflow-quality
+      - licensing
+      - windows-quality
+      - windows-latest
+      - msrv
+      - target-checks
+      - portable
+      - miri
+      - coverage
+      - public-api
+      - semver
+      - package-consumer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: jq -L .github -e 'include "required"; assurance' <<< "$NEEDS"
+  required-check:
+    name: required
+    if: always()
+    needs: [required]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - env:
+          RESULT: ${{ needs.required.result }}
+        run: test "$RESULT" = success

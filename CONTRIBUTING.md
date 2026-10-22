@@ -1,8 +1,16 @@
 # Contributing
 
-Use Rust 1.88 or newer. Keep normal dependencies limited to `windows-sys`,
-`thiserror`, `bitflags`, and optional `tokio` unless an accepted design
-record changes that policy.
+Routine CI selects the Windows Rust checks when Rust or verification inputs change.
+It runs formatting, Clippy, native tests, doctests, E2E, rustdoc, package helper tests, and the declared Rust floor.
+Metadata, licensing, spelling, and workflow checks run for every change.
+Pull requests and merge queues use the same result predicates.
+
+The release workflow requires the same-source candidate assurance before packaging or protected publication.
+That stage retains the Windows, portable, architecture, Miri, coverage, API, semver, and package-consumer inventory.
+Run an affected campaign on demand when its answer is useful; ordinary pull requests use the fast gate.
+
+Use Rust 1.88 or newer.
+Keep normal dependencies limited to `windows-sys`, `thiserror`, `bitflags`, and optional `tokio` unless an accepted design record changes that policy.
 
 Before submitting a change, run:
 
@@ -16,11 +24,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --locked --no-de
 cargo package --locked
 ```
 
-Native tests and E2E scenarios must act only on dedicated fixture processes and
-temporary files. Never point a shutdown test at an editor, shell, build tool,
-or unrelated user process.
+Native tests and E2E scenarios must act only on dedicated fixture processes and temporary files.
+Never point a shutdown test at an editor, shell, build tool, or unrelated user process.
 
-Public API changes require updated default/all-feature snapshots, semver review,
-CHANGELOG notes, and a design record when lifecycle or unsafe invariants
-change. Snapshot filenames are stable across releases:
-`api/restart-manager-default.txt` and `api/restart-manager-all.txt`.
+Public API changes require updated default/all-feature snapshots, semver review, CHANGELOG notes, and a design record when lifecycle or unsafe invariants change.
+Snapshot filenames are stable across releases: `api/restart-manager-default.txt` and `api/restart-manager-all.txt`.

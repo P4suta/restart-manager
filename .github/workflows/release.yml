@@ -19,7 +19,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  assurance:
+    uses: ./.github/workflows/assurance.yml
+    permissions:
+      contents: read
+
   verify:
+    needs: assurance
     runs-on: windows-2022
     permissions:
       contents: read
@@ -37,6 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
@@ -115,6 +123,7 @@ jobs:
         with:
           name: ${{ steps.package.outputs.artifact_name }}
           path: release-artifacts/
+          retention-days: 7
           if-no-files-found: error
 
   publish:
@@ -128,6 +137,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
@@ -249,7 +260,7 @@ jobs:
       # clone and rejects `--repo`, so the tag has to be checked out here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Create or reuse the draft, attach exact assets, and publish
