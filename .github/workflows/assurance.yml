@@ -59,7 +59,7 @@ jobs:
 
   windows-quality:
     name: Windows 2022 quality, native, and E2E
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,7 +98,7 @@ jobs:
 
   msrv:
     name: Rust 1.88 MSRV
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,7 +114,7 @@ jobs:
 
   target-checks:
     name: Compile ${{ matrix.target }} (${{ matrix.features }})
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -180,7 +180,7 @@ jobs:
 
   coverage:
     name: Library and unsafe boundary coverage >= 90%
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -232,7 +232,7 @@ jobs:
 
   public-api:
     name: Default and all-feature API snapshots
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -297,7 +297,7 @@ jobs:
 
   package-consumer:
     name: Packaged default/all-feature consumer smoke
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

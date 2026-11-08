@@ -47,7 +47,7 @@ jobs:
     name: Windows Rust checks
     needs: checks
     if: needs.checks.outputs.rust == 'true'
-    runs-on: windows-2022
+    runs-on: windows-2025
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
