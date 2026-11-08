@@ -3,6 +3,16 @@
 All notable changes are recorded here.
 
 ## [Unreleased]
+## [0.1.1] - 2026-11-08
+
+
+### Other
+
+- bump thiserror from 2.0.19 to 2.0.20 in the rust-dependencies group ([#13](https://github.com/P4suta/restart-manager/pull/13))
+- bump bitflags from 2.13.1 to 2.13.2 in the rust-dependencies group ([#16](https://github.com/P4suta/restart-manager/pull/16))
+- *(secrets)* use scoped Doppler identities ([#25](https://github.com/P4suta/restart-manager/pull/25))
+- refresh dependencies and focus routine validation ([#27](https://github.com/P4suta/restart-manager/pull/27))
+- *(secrets)* sync protected release credentials ([#30](https://github.com/P4suta/restart-manager/pull/30))
 
 ## [0.1.0] - 2026-08-03
 
