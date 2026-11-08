@@ -26,7 +26,7 @@ jobs:
 
   verify:
     needs: assurance
-    runs-on: windows-2022
+    runs-on: windows-2025
     permissions:
       contents: read
       id-token: write
@@ -129,7 +129,7 @@ jobs:
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: verify
-    runs-on: windows-2022
+    runs-on: windows-2025
     environment: crates-io
     permissions:
       contents: read
@@ -229,7 +229,7 @@ jobs:
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: [verify, publish]
-    runs-on: windows-2022
+    runs-on: windows-2025
     permissions:
       contents: write
     steps:
