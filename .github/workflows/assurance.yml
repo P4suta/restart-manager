@@ -16,7 +16,7 @@ env:
 jobs:
   workflow-quality:
     name: Actions and release-metadata validation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +43,7 @@ jobs:
 
   licensing:
     name: Licensing and spelling
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -162,7 +162,7 @@ jobs:
 
   miri:
     name: Portable pure tests under Miri
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     env:
       MIRIFLAGS: -Zmiri-disable-isolation
@@ -256,7 +256,7 @@ jobs:
 
   semver:
     name: Reject breaking API changes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -336,7 +336,7 @@ jobs:
       - public-api
       - semver
       - package-consumer
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -350,7 +350,7 @@ jobs:
     name: required
     if: always()
     needs: [required]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
