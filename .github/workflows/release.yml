@@ -26,7 +26,7 @@ jobs:
 
   verify:
     needs: assurance
-    runs-on: windows-2022
+    runs-on: windows-2025
     permissions:
       contents: read
       id-token: write
@@ -46,7 +46,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: 1.100.0
           components: clippy,rustfmt
@@ -129,7 +129,7 @@ jobs:
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: verify
-    runs-on: windows-2022
+    runs-on: windows-2025
     environment: crates-io
     permissions:
       contents: read
@@ -140,7 +140,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: 1.100.0
       - id: package
@@ -229,7 +229,7 @@ jobs:
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: [verify, publish]
-    runs-on: windows-2022
+    runs-on: windows-2025
     permissions:
       contents: write
     steps:
